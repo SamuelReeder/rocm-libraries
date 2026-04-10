@@ -1,0 +1,42 @@
+# Mergify merge queue configuration for hipDNN + DNN providers
+#
+# Each provider scope includes projects/hipdnn/ so that core PRs
+# automatically enter ALL provider scopes and serialize with them.
+# Provider-only PRs enter just their own scope and move independently.
+#
+# Queue PRs manually with: @mergifyio queue
+
+queue_rules:
+  - name: default
+    merge_method: squash
+    batch_size: 1
+    merge_conditions:
+      - check-success=pre-commit
+
+scopes:
+  source:
+    files:
+      miopen-provider:
+        include:
+          - dnn-providers/miopen-provider/**
+          - projects/hipdnn/**
+
+      hipblaslt-provider:
+        include:
+          - dnn-providers/hipblaslt-provider/**
+          - projects/hipdnn/**
+
+      hip-kernel-provider:
+        include:
+          - dnn-providers/hip-kernel-provider/**
+          - projects/hipdnn/**
+
+      fusilli-provider:
+        include:
+          - dnn-providers/fusilli-provider/**
+          - projects/hipdnn/**
+
+      integration-tests:
+        include:
+          - dnn-providers/integration-tests/**
+          - projects/hipdnn/**
