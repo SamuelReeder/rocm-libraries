@@ -24,3 +24,4 @@ To build the plugin standalone, first install hipDNN and hipBLASLt on the system
 ## Operation support
 
 The list of supported operations is described in [Operation Support](docs/OperationSupport.md) documentation.
+<!-- mergify test: hipblaslt change -->
