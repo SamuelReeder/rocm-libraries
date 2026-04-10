@@ -356,3 +356,4 @@ if(NOT HIPDNN_SKIP_TESTS)
     install_hipdnn_ctest_files()
 endif()
 <!-- final test: core 2 -->
+<!-- core-seq-3: error code expansion -->
