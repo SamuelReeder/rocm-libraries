@@ -25,6 +25,7 @@ from rocm_mq._helpers import (
     is_app_identity_actor,
     parse_gh_timestamp,
 )
+from rocm_mq.comment import render_status_body
 from rocm_mq.decision import decide_cycle, derive_pr, derive_snapshot
 from rocm_mq.pathmap import queues_for_paths
 from rocm_mq.state import (
@@ -51,6 +52,7 @@ from rocm_mq.state import (
     TimelineActor,
     UpdateComment,
 )
+from rocm_mq.summary import render_cycle_summary
 
 __all__ = [
     "Action",
@@ -92,4 +94,8 @@ __all__ = [
     "parse_gh_timestamp",
     # pathmap
     "queues_for_paths",
+    # summary
+    "render_cycle_summary",
+    # comment
+    "render_status_body",
 ]
