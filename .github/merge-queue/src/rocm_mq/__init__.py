@@ -15,7 +15,7 @@ Removing symbols is a breaking change requiring all consuming phases to be updat
 Symbols from ``_helpers`` are intentionally surfaced here for I/O-boundary
 callers — the leading underscore communicates "I/O-boundary use only, not user-facing".
 
-``pathmap``, ``decision``, ``comment``, and ``summary`` exports will be added in
+``decision``, ``comment``, and ``summary`` exports will be added in
 Plans 02 and 03 of Phase 1 once those modules exist.
 """
 
@@ -25,6 +25,8 @@ from rocm_mq._helpers import (
     is_app_identity_actor,
     parse_gh_timestamp,
 )
+from rocm_mq.decision import decide_cycle, derive_pr, derive_snapshot
+from rocm_mq.pathmap import queues_for_paths
 from rocm_mq.state import (
     Action,
     ActionOutcome,
@@ -80,8 +82,14 @@ __all__ = [
     "Squash",
     "TimelineActor",
     "UpdateComment",
+    # decision
+    "decide_cycle",
+    "derive_pr",
+    "derive_snapshot",
     "is_app_identity",
     "is_app_identity_actor",
     # Helpers
     "parse_gh_timestamp",
+    # pathmap
+    "queues_for_paths",
 ]
