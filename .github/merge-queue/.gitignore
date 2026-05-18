@@ -1,0 +1,21 @@
+# Hypothesis database — ignore the directory but keep the examples database
+.hypothesis/
+!.hypothesis/examples/
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# uv lockfile artefacts (committed separately if uv is adopted)
+# uv.lock is intentionally excluded from gitignore — commit it when generated
