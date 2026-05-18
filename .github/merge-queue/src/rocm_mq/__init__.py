@@ -25,6 +25,7 @@ from rocm_mq._helpers import (
     is_app_identity_actor,
     parse_gh_timestamp,
 )
+from rocm_mq.decision import decide_cycle, derive_pr, derive_snapshot
 from rocm_mq.pathmap import queues_for_paths
 from rocm_mq.state import (
     Action,
@@ -81,6 +82,10 @@ __all__ = [
     "Squash",
     "TimelineActor",
     "UpdateComment",
+    # decision
+    "decide_cycle",
+    "derive_pr",
+    "derive_snapshot",
     "is_app_identity",
     "is_app_identity_actor",
     # Helpers
