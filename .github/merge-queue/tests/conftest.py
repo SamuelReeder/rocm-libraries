@@ -6,10 +6,14 @@ Responsibilities:
    Profile is selected by the ``CI`` environment variable.
 2. ``utc(year, month, day, ...)`` datetime helper — the ONLY way tests should
    construct tz-aware datetimes (Pitfall 3 chokepoint for test code).
-3. Canonical ``AppIdentity`` fixture + five non-canonical ``CommitStatusCreator``
-   fixtures (RESEARCH.md *Identity Helper* fixture matrix lines 384-391).
-4. Skeleton per-state PR + RenderContext fixtures (populated with real content
-   in Plan 03 renderer tests; these are placeholders for Plan 01 scaffolding).
+3. Canonical ``AppIdentity`` constant + fixture + five non-canonical
+   ``CommitStatusCreator`` fixtures (RESEARCH.md *Identity Helper* fixture
+   matrix lines 384-391).
+4. ``CANONICAL_APP`` module-level constant and ``canonical_merge_queue_config()``
+   callable — the single owning home for the canonical MergeQueueConfig consumed
+   by Plans 04 (invariant suite) and 05 (worked-example regression).
+   Neither downstream plan redefines this symbol; both import from here only.
+5. Per-state PR + RenderContext fixtures for renderer snapshot tests (Plan 03).
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from hypothesis import HealthCheck, settings
 from rocm_mq.state import (
     AppIdentity,
     CommitStatusCreator,
+    MergeQueueConfig,
     PRState,
     RenderContext,
     RequiredCheckResult,
@@ -76,6 +81,113 @@ def utc(
 
 
 # ---------------------------------------------------------------------------
+# CANONICAL_APP — module-level constant (Plan 03 territory, Plan 04 + 05 import)
+#
+# This is the single owning home of the canonical App identity sentinel.
+# Plan 04 invariant suite and Plan 05 worked example import CANONICAL_APP from
+# here; neither redefines it.
+# ---------------------------------------------------------------------------
+
+CANONICAL_APP = AppIdentity(slug="rocm-mq", app_id=12345, bot_user_id=99999)
+
+
+# ---------------------------------------------------------------------------
+# canonical_merge_queue_config — callable factory (NOT a fixture).
+#
+# Returns the canonical MergeQueueConfig for the six hipDNN-ecosystem queues
+# per RFC §4.2. Both Plan 04 and Plan 05 call this function at module scope or
+# from state-machine @initialize methods — it MUST be a plain callable (not a
+# pytest fixture) so non-pytest code can import it.
+#
+# Rule: Plans 04 + 05 import from tests.conftest ONLY.
+#   - Plan 04 _strategies.py does NOT redefine or re-export this symbol.
+#   - Plan 05 worked-example constants module does NOT copy-paste this.
+# Locking the single owning home eliminates two-copy drift (T-01-12b).
+# ---------------------------------------------------------------------------
+
+# RFC §4.2 path → queue mapping, pre-sorted longest-first.
+# Ordering is the loader's responsibility; these fixtures already satisfy it.
+_CANONICAL_PATH_TO_QUEUES: tuple[tuple[str, frozenset[str]], ...] = (
+    # longest prefixes first
+    (
+        "dnn-providers/integration-tests/",
+        frozenset(
+            {
+                "miopen-provider",
+                "hipblaslt-provider",
+                "composable-kernel-provider",
+                "rocblas-provider",
+                "integration-tests",
+            }
+        ),
+    ),
+    (
+        "projects/hipdnn/",
+        frozenset(
+            {
+                "hipdnn",
+                "miopen-provider",
+                "hipblaslt-provider",
+                "composable-kernel-provider",
+                "rocblas-provider",
+                "integration-tests",
+            }
+        ),
+    ),
+    (
+        "dnn-providers/miopen-provider/",
+        frozenset({"miopen-provider"}),
+    ),
+    (
+        "dnn-providers/hipblaslt-provider/",
+        frozenset({"hipblaslt-provider"}),
+    ),
+    (
+        "dnn-providers/composable-kernel-provider/",
+        frozenset({"composable-kernel-provider"}),
+    ),
+    (
+        "dnn-providers/rocblas-provider/",
+        frozenset({"rocblas-provider"}),
+    ),
+)
+
+_CANONICAL_ALL_QUEUES: tuple[str, ...] = (
+    "hipdnn",
+    "miopen-provider",
+    "hipblaslt-provider",
+    "composable-kernel-provider",
+    "rocblas-provider",
+    "integration-tests",
+)
+
+
+def canonical_merge_queue_config() -> MergeQueueConfig:
+    """Return the canonical MergeQueueConfig for the six hipDNN-ecosystem queues.
+
+    Populated per RFC §4.2:
+    - app_identity = CANONICAL_APP (slug="rocm-mq", app_id=12345, bot_user_id=99999)
+    - queues: hipdnn, miopen-provider, hipblaslt-provider, composable-kernel-provider,
+      rocblas-provider, integration-tests
+    - path_to_queues: pre-sorted longest-prefix-first (integration-tests/ before hipdnn/)
+    - activation_status_context: "merge-queue/active"
+    - active_label: "mq:active", queued_label: "mq:queued"
+
+    This is the single owning home for this configuration (T-01-12b). Plan 04 invariant
+    suite (RuleBasedStateMachine @initialize) and Plan 05 worked-example constants both
+    import this callable from tests.conftest — NOT from tests._strategies.
+    """
+    return MergeQueueConfig(
+        all_queues=_CANONICAL_ALL_QUEUES,
+        path_to_queues=_CANONICAL_PATH_TO_QUEUES,
+        app_identity=CANONICAL_APP,
+        activation_status_context="merge-queue/active",
+        active_label="mq:active",
+        queued_label="mq:queued",
+    )
+
+
+# ---------------------------------------------------------------------------
 # AppIdentity fixtures
 # ---------------------------------------------------------------------------
 
@@ -83,7 +195,7 @@ def utc(
 @pytest.fixture()
 def canonical_app_identity() -> AppIdentity:
     """The canonical merge-queue App identity (sentinel values for tests)."""
-    return AppIdentity(slug="rocm-mq", app_id=12345, bot_user_id=99999)
+    return CANONICAL_APP
 
 
 # ---------------------------------------------------------------------------
@@ -193,9 +305,7 @@ def non_canonical_creator(
 
 
 # ---------------------------------------------------------------------------
-# Skeleton per-state PR fixtures
-# (Plan 03 renderer tests will populate with real RenderContext content;
-#  these are minimal placeholders exercising the dataclass construction path)
+# Helper for constructing required check tuples
 # ---------------------------------------------------------------------------
 
 
@@ -205,99 +315,40 @@ def _make_required_checks(
     return tuple(RequiredCheckResult(name=n, state=s) for n, s in names_states)
 
 
+# ---------------------------------------------------------------------------
+# Per-state PR fixtures (Plan 03 renderer test scenarios)
+#
+# These are realistic instances matching the scenario descriptions in PLAN.md
+# Task 1 action section.  Each pr_state__* is paired with a render_ctx__* fixture.
+# ---------------------------------------------------------------------------
+
+
 @pytest.fixture()
 def pr_state__miopen_pr_queued_position_2_of_3() -> PRState:
-    """MIOpen PR queued at position 2 of 3 in the hipdnn queue."""
+    """PR #42 touching miopen-provider only, queued at position 2 of 3."""
     return PRState(
-        number=101,
-        head_sha="abc1111",
-        labels=frozenset({"mq:queued"}),
-        queues=frozenset({"hipdnn"}),
-        enqueued_at=utc(2026, 4, 22, 10, 0, 0),
-        is_validly_active=False,
-        required_check_results=_make_required_checks(("CI / build", "pending")),
-    )
-
-
-@pytest.fixture()
-def pr_state__core_pr_active_checks_pending() -> PRState:
-    """Core PR at head of queue with activation status set but checks still pending."""
-    return PRState(
-        number=201,
-        head_sha="def2222",
-        labels=frozenset({"mq:queued", "mq:active"}),
-        queues=frozenset({"core", "hipdnn"}),
-        enqueued_at=utc(2026, 4, 22, 9, 0, 0),
-        is_validly_active=True,
-        required_check_results=_make_required_checks(
-            ("CI / build", "pending"),
-            ("CI / test", "pending"),
-        ),
-    )
-
-
-@pytest.fixture()
-def pr_state__core_pr_merged() -> PRState:
-    """Core PR that has been squash-merged (labels cleared)."""
-    return PRState(
-        number=202,
-        head_sha="ghi3333",
-        labels=frozenset(),
-        queues=frozenset(),
-        enqueued_at=utc(2026, 4, 22, 8, 0, 0),
+        number=42,
+        head_sha="cafe0001cafe0002cafe0003cafe0004cafe0005",
+        labels=frozenset({"mq:queued", "mq:miopen-provider"}),
+        queues=frozenset({"miopen-provider"}),
+        enqueued_at=utc(2026, 4, 22, 14, 10),
         is_validly_active=False,
         required_check_results=_make_required_checks(
-            ("CI / build", "success"),
-            ("CI / test", "success"),
+            ("TheRock / build", "pending"),
+            ("CI / unit-tests", "pending"),
         ),
     )
-
-
-@pytest.fixture()
-def pr_state__core_pr_ejected_ci_failure() -> PRState:
-    """Core PR ejected because required CI check failed."""
-    return PRState(
-        number=203,
-        head_sha="jkl4444",
-        labels=frozenset({"mq:queued", "mq:active"}),
-        queues=frozenset({"core"}),
-        enqueued_at=utc(2026, 4, 22, 7, 30, 0),
-        is_validly_active=True,
-        required_check_results=_make_required_checks(
-            ("CI / build", "failure"),
-            ("CI / test", "pending"),
-        ),
-    )
-
-
-@pytest.fixture()
-def pr_state__core_pr_ejected_approval_revoked() -> PRState:
-    """Core PR that had approval revoked after enqueue."""
-    return PRState(
-        number=204,
-        head_sha="mno5555",
-        labels=frozenset({"mq:queued"}),
-        queues=frozenset({"core"}),
-        enqueued_at=utc(2026, 4, 22, 7, 0, 0),
-        is_validly_active=False,
-        required_check_results=_make_required_checks(("CI / build", "success")),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Skeleton RenderContext fixtures (parallel to per-state PR fixtures above)
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
 def render_ctx__miopen_pr_queued_position_2_of_3() -> RenderContext:
-    """RenderContext for a queued PR at position 2 of 3."""
+    """RenderContext for miopen PR queued at position 2 of 3."""
     return RenderContext(
-        author_login="dev-user",
-        pr_title="[MIOpen] Add SDPA kernel variant",
-        queue_positions=(("hipdnn", 2, 3),),
-        blockers=(100,),  # PR 100 is ahead in queue
-        cycle_run_url=None,
+        author_login="alice",
+        pr_title="Fix MIOpen kernel autotuning",
+        queue_positions=(("miopen-provider", 2, 3),),
+        blockers=(41,),
+        cycle_run_url="https://github.com/SamuelReeder/rocm-libraries/actions/runs/1234567",
         state="queued",
         eject_reason=None,
         merged_sha=None,
@@ -305,14 +356,59 @@ def render_ctx__miopen_pr_queued_position_2_of_3() -> RenderContext:
 
 
 @pytest.fixture()
+def pr_state__core_pr_active_checks_pending() -> PRState:
+    """PR #99 touching projects/hipdnn/ (all six queues), is_validly_active=True."""
+    return PRState(
+        number=99,
+        head_sha="abc1234abc1234abc1234abc1234abc1234abc12",
+        labels=frozenset(
+            {
+                "mq:queued",
+                "mq:active",
+                "mq:hipdnn",
+                "mq:miopen-provider",
+                "mq:hipblaslt-provider",
+                "mq:composable-kernel-provider",
+                "mq:rocblas-provider",
+                "mq:integration-tests",
+            }
+        ),
+        queues=frozenset(
+            {
+                "hipdnn",
+                "miopen-provider",
+                "hipblaslt-provider",
+                "composable-kernel-provider",
+                "rocblas-provider",
+                "integration-tests",
+            }
+        ),
+        enqueued_at=utc(2026, 4, 22, 9, 5),
+        is_validly_active=True,
+        required_check_results=_make_required_checks(
+            ("TheRock / build", "pending"),
+            ("TheRock / unit-tests", "success"),
+            ("CI / integration", "pending"),
+        ),
+    )
+
+
+@pytest.fixture()
 def render_ctx__core_pr_active_checks_pending() -> RenderContext:
-    """RenderContext for a PR that is active (head-of-queue) but checks pending."""
+    """RenderContext for active PR with checks pending."""
     return RenderContext(
-        author_login="core-dev",
-        pr_title="[Core] Refactor memory allocator",
-        queue_positions=(("core", 1, 2), ("hipdnn", 1, 2)),
+        author_login="bob",
+        pr_title="[hipDNN] Add SDPA forward kernel",
+        queue_positions=(
+            ("hipdnn", 1, 1),
+            ("miopen-provider", 1, 2),
+            ("hipblaslt-provider", 1, 1),
+            ("composable-kernel-provider", 1, 1),
+            ("rocblas-provider", 1, 1),
+            ("integration-tests", 1, 1),
+        ),
         blockers=(),
-        cycle_run_url="https://github.com/ROCm/rocm-libraries/actions/runs/12345",
+        cycle_run_url="https://github.com/SamuelReeder/rocm-libraries/actions/runs/1234568",
         state="active",
         eject_reason=None,
         merged_sha=None,
@@ -320,45 +416,97 @@ def render_ctx__core_pr_active_checks_pending() -> RenderContext:
 
 
 @pytest.fixture()
+def pr_state__core_pr_merged() -> PRState:
+    """PR #99 post-merge (labels cleared)."""
+    return PRState(
+        number=99,
+        head_sha="abc1234abc1234abc1234abc1234abc1234abc12",
+        labels=frozenset(),
+        queues=frozenset(),
+        enqueued_at=utc(2026, 4, 22, 9, 5),
+        is_validly_active=False,
+        required_check_results=_make_required_checks(
+            ("TheRock / build", "success"),
+            ("TheRock / unit-tests", "success"),
+            ("CI / integration", "success"),
+        ),
+    )
+
+
+@pytest.fixture()
 def render_ctx__core_pr_merged() -> RenderContext:
-    """RenderContext for a merged PR."""
+    """RenderContext for merged PR."""
     return RenderContext(
-        author_login="core-dev",
-        pr_title="[Core] Fix memory leak in graph mode",
+        author_login="bob",
+        pr_title="[hipDNN] Add SDPA forward kernel",
         queue_positions=(),
         blockers=(),
-        cycle_run_url="https://github.com/ROCm/rocm-libraries/actions/runs/12344",
+        cycle_run_url="https://github.com/SamuelReeder/rocm-libraries/actions/runs/1234568",
         state="merged",
         eject_reason=None,
-        merged_sha="deadbeef1234567890abcdef",
+        merged_sha="def5678def5678def5678def5678def5678def5",
+    )
+
+
+@pytest.fixture()
+def pr_state__core_pr_ejected_ci_failure() -> PRState:
+    """PR #99 ejected due to CI failure."""
+    return PRState(
+        number=99,
+        head_sha="abc1234abc1234abc1234abc1234abc1234abc12",
+        labels=frozenset({"mq:queued", "mq:active", "mq:hipdnn"}),
+        queues=frozenset({"hipdnn"}),
+        enqueued_at=utc(2026, 4, 22, 9, 5),
+        is_validly_active=True,
+        required_check_results=_make_required_checks(
+            ("TheRock / build", "failure"),
+            ("TheRock / unit-tests", "success"),
+            ("CI / integration", "pending"),
+        ),
     )
 
 
 @pytest.fixture()
 def render_ctx__core_pr_ejected_ci_failure() -> RenderContext:
-    """RenderContext for a CI-failure ejected PR."""
+    """RenderContext for CI-failure ejected PR."""
     return RenderContext(
-        author_login="core-dev",
-        pr_title="[Core] Add experimental feature",
+        author_login="bob",
+        pr_title="[hipDNN] Add SDPA forward kernel",
         queue_positions=(),
         blockers=(),
-        cycle_run_url="https://github.com/ROCm/rocm-libraries/actions/runs/12343",
+        cycle_run_url="https://github.com/SamuelReeder/rocm-libraries/actions/runs/1234570",
         state="ejected",
-        eject_reason="Required check 'CI / build' failed",
+        eject_reason="TheRock CI Summary failed on commit abc1234",
         merged_sha=None,
     )
 
 
 @pytest.fixture()
+def pr_state__core_pr_ejected_approval_revoked() -> PRState:
+    """PR #99 ejected because approval was revoked."""
+    return PRState(
+        number=99,
+        head_sha="abc1234abc1234abc1234abc1234abc1234abc12",
+        labels=frozenset({"mq:queued", "mq:hipdnn"}),
+        queues=frozenset({"hipdnn"}),
+        enqueued_at=utc(2026, 4, 22, 9, 5),
+        is_validly_active=False,
+        required_check_results=_make_required_checks(
+            ("TheRock / build", "success"),
+        ),
+    )
+
+
+@pytest.fixture()
 def render_ctx__core_pr_ejected_approval_revoked() -> RenderContext:
-    """RenderContext for an approval-revoked ejected PR."""
+    """RenderContext for approval-revoked ejected PR."""
     return RenderContext(
-        author_login="core-dev",
-        pr_title="[Core] Update dependency pins",
+        author_login="bob",
+        pr_title="[hipDNN] Add SDPA forward kernel",
         queue_positions=(),
         blockers=(),
         cycle_run_url=None,
         state="ejected",
-        eject_reason="Required approval was revoked after enqueue",
+        eject_reason="approval revoked",
         merged_sha=None,
     )

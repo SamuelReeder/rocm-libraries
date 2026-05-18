@@ -16,7 +16,6 @@ from syrupy.assertion import SnapshotAssertion
 
 from rocm_mq.comment import render_status_body
 
-
 # ---------------------------------------------------------------------------
 # Fixed timestamp used across all snapshot tests
 # ---------------------------------------------------------------------------
@@ -193,7 +192,7 @@ def test_unknown_state_raises_value_error(
 
 def test_canonical_merge_queue_config_importable() -> None:
     """canonical_merge_queue_config is importable from tests.conftest."""
-    from tests.conftest import canonical_merge_queue_config  # noqa: PLC0415
+    from tests.conftest import canonical_merge_queue_config
 
     cfg = canonical_merge_queue_config()
     expected_queues = {
@@ -212,7 +211,7 @@ def test_canonical_merge_queue_config_importable() -> None:
 
 def test_canonical_app_identity_matches_config() -> None:
     """CANONICAL_APP constant matches canonical_merge_queue_config().app_identity."""
-    from tests.conftest import CANONICAL_APP, canonical_merge_queue_config  # noqa: PLC0415
+    from tests.conftest import CANONICAL_APP, canonical_merge_queue_config
 
     cfg = canonical_merge_queue_config()
     assert cfg.app_identity == CANONICAL_APP
@@ -220,9 +219,8 @@ def test_canonical_app_identity_matches_config() -> None:
 
 def test_canonical_app_identity_fixture(canonical_app_identity: object) -> None:
     """canonical_app_identity fixture returns CANONICAL_APP."""
-    from tests.conftest import CANONICAL_APP  # noqa: PLC0415
-
     from rocm_mq.state import AppIdentity
+    from tests.conftest import CANONICAL_APP
 
     assert isinstance(canonical_app_identity, AppIdentity)
     assert canonical_app_identity == CANONICAL_APP

@@ -51,3 +51,4 @@ strict = true
 testpaths = ["tests"]
 addopts = "--strict-markers --strict-config"
 filterwarnings = ["error"]
+pythonpath = ["."]

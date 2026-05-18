@@ -1,0 +1,73 @@
+# serializer version: 1
+# name: test_render_status_body_snapshot[active-core_pr_active_checks_pending]
+  '''
+  ## 🚦 Active in merge queue
+  
+  Activated on head SHA `abc1234abc1234abc1234abc1234abc1234abc12`.
+  
+  | Check | Status |
+  |---|---|
+  | TheRock / build | pending |
+  | TheRock / unit-tests | success |
+  | CI / integration | pending |
+  _Updated 2026-04-22 15:26 UTC._
+  Last processed: [run](https://github.com/SamuelReeder/rocm-libraries/actions/runs/1234568)
+  
+  <!-- rocm-mq-status -->
+  '''
+# ---
+# name: test_render_status_body_snapshot[ejected_ci-core_pr_ejected_ci_failure]
+  '''
+  ## ❌ Ejected from merge queue
+  
+  Reason: TheRock CI Summary failed on commit abc1234.
+  
+  Re-enqueue with `/merge` once addressed.
+  _Updated 2026-04-22 15:26 UTC._
+  Last processed: [run](https://github.com/SamuelReeder/rocm-libraries/actions/runs/1234570)
+  
+  <!-- rocm-mq-status -->
+  '''
+# ---
+# name: test_render_status_body_snapshot[ejected_revoked-core_pr_ejected_approval_revoked]
+  '''
+  ## ❌ Ejected from merge queue
+  
+  Reason: approval revoked.
+  
+  Re-enqueue with `/merge` once addressed.
+  _Updated 2026-04-22 15:26 UTC._
+  
+  <!-- rocm-mq-status -->
+  '''
+# ---
+# name: test_render_status_body_snapshot[merged-core_pr_merged]
+  '''
+  ## ✅ Merged
+  
+  Squashed to develop as `def5678def5678def5678def5678def5678def5`.
+  _Updated 2026-04-22 15:26 UTC._
+  Last processed: [run](https://github.com/SamuelReeder/rocm-libraries/actions/runs/1234568)
+  
+  <!-- rocm-mq-status -->
+  '''
+# ---
+# name: test_render_status_body_snapshot[queued-miopen_pr_queued_position_2_of_3]
+  '''
+  ## ⏳ Queued for merge
+  
+  Enqueued by @alice at 2026-04-22 14:10 UTC.
+  
+  This PR touches 1 queue(s):
+  
+  | Queue | Position | Blocked by |
+  |---|---|---|
+  | miopen-provider | 2/3 | #41 |
+  
+  Comment `/dequeue` to leave the queue. Processor runs every 3 minutes.
+  _Updated 2026-04-22 15:26 UTC._
+  Last processed: [run](https://github.com/SamuelReeder/rocm-libraries/actions/runs/1234567)
+  
+  <!-- rocm-mq-status -->
+  '''
+# ---
