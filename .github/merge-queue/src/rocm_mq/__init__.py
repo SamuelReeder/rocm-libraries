@@ -52,6 +52,7 @@ from rocm_mq.state import (
     TimelineActor,
     UpdateComment,
 )
+from rocm_mq.summary import render_cycle_summary
 
 __all__ = [
     "Action",
@@ -93,6 +94,8 @@ __all__ = [
     "parse_gh_timestamp",
     # pathmap
     "queues_for_paths",
+    # summary
+    "render_cycle_summary",
     # comment
     "render_status_body",
 ]

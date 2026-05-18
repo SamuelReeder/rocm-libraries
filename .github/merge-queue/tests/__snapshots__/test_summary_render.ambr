@@ -1,0 +1,88 @@
+# serializer version: 1
+# name: test_render_cycle_summary_snapshot_all_defer
+  '''
+  ## Queue depth
+  
+  | Queue | Depth |
+  |---|---|
+  | hipdnn | 3 |
+  | miopen-provider | 1 |
+  | rocblas-provider | 1 |
+  
+  ## Active PRs
+  
+  _None_
+  
+  ## Cycle outcomes
+  
+  - ⏸ Defer #11: timeline lag
+  - ⏸ Defer #12: mq:queued label present but timeline event not yet visible
+  - ⏸ Defer #13: mq:queued applied by non-App actor
+  
+  ## Cycle duration
+  
+  0m:15s
+  
+  Cycle run: <https://github.com/SamuelReeder/rocm-libraries/actions/runs/1001>
+  '''
+# ---
+# name: test_render_cycle_summary_snapshot_empty
+  '''
+  ## Queue depth
+  
+  | Queue | Depth |
+  |---|---|
+  | hipdnn | 0 |
+  | miopen-provider | 0 |
+  | hipblaslt-provider | 0 |
+  | composable-kernel-provider | 0 |
+  | rocblas-provider | 0 |
+  | integration-tests | 0 |
+  
+  ## Active PRs
+  
+  _None_
+  
+  ## Cycle outcomes
+  
+  _No actions this cycle._
+  
+  ## Cycle duration
+  
+  0m:30s
+  
+  Cycle run: <https://github.com/SamuelReeder/rocm-libraries/actions/runs/999>
+  '''
+# ---
+# name: test_render_cycle_summary_snapshot_mixed
+  '''
+  ## Queue depth
+  
+  | Queue | Depth |
+  |---|---|
+  | hipdnn | 1 |
+  | miopen-provider | 1 |
+  | hipblaslt-provider | 1 |
+  | composable-kernel-provider | 1 |
+  | rocblas-provider | 1 |
+  | integration-tests | 0 |
+  
+  ## Active PRs
+  
+  - #10 (head `aaaaaaa`, enqueued at 2026-04-22 08:00 UTC)
+  - #20 (head `bbbbbbb`, enqueued at 2026-04-22 09:00 UTC)
+  
+  ## Cycle outcomes
+  
+  - ✅ Squash #10
+  - ✨ Activate #20
+  - ❌ Eject #30: TheRock CI failed — FAILED: branch protection blocked
+  - ⏸ Defer #40: timeline lag
+  
+  ## Cycle duration
+  
+  0m:30s
+  
+  Cycle run: <https://github.com/SamuelReeder/rocm-libraries/actions/runs/1000>
+  '''
+# ---

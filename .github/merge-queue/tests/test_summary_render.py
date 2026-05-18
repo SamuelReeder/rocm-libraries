@@ -30,9 +30,11 @@ from rocm_mq.state import (
 )
 
 
-def utc(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
+def utc(
+    year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0
+) -> datetime:
     """Local tz-aware helper for fixture construction."""
-    return datetime(year, month, day, hour, minute, tzinfo=UTC)
+    return datetime(year, month, day, hour, minute, second, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
