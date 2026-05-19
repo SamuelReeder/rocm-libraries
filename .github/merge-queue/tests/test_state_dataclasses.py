@@ -14,14 +14,12 @@ Also includes:
 from __future__ import annotations
 
 import dataclasses
-import importlib
 import inspect
 import sys
 from datetime import UTC, datetime
 
 import pytest
 
-import rocm_mq
 import rocm_mq.state as state_module
 
 # ---------------------------------------------------------------------------
@@ -192,19 +190,39 @@ def test_all_datetime_fields_in_dataclasses_are_documented_as_tz_required() -> N
 
 def test_anti_pydantic_canary_no_basemodel_in_state() -> None:
     """state.py must not export BaseModel (or any Pydantic type)."""
-    assert not hasattr(rocm_mq.state, "BaseModel"), (
+    assert not hasattr(state_module, "BaseModel"), (
         "rocm_mq.state exports a Pydantic BaseModel — this violates the "
         "pure-dataclass contract (STACK.md 'What NOT to Use')"
     )
 
 
 def test_anti_pydantic_canary_pydantic_not_imported() -> None:
-    """pydantic must not be imported as a side-effect of importing rocm_mq."""
-    # Re-import rocm_mq to ensure clean side-effects (it's already imported above)
-    importlib.reload(rocm_mq)
-    assert "pydantic" not in sys.modules, (
-        "pydantic was found in sys.modules after importing rocm_mq — "
-        "this violates the pure-dataclass contract (Pitfall 1, STACK.md)"
+    """pydantic must not be imported as a side-effect of importing rocm_mq.
+
+    Run in a clean subprocess so the check is not polluted by other tests in
+    this session that legitimately import ``rocm_mq.gh`` (which transitively
+    pulls in githubkit -> pydantic). The pure-layer contract is that importing
+    ``rocm_mq`` itself — the public Phase 1 surface — does NOT drag pydantic
+    into sys.modules; importing the I/O sibling ``rocm_mq.gh`` is allowed to.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import rocm_mq; "
+            "assert 'pydantic' not in sys.modules, "
+            "'pydantic in sys.modules after import rocm_mq'",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "pydantic was found in sys.modules after importing rocm_mq in a clean "
+        "subprocess — this violates the pure-dataclass contract "
+        f"(Pitfall 1, STACK.md). stderr: {result.stderr}"
     )
 
 

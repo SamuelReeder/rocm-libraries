@@ -12,7 +12,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from rocm_mq.summary import render_cycle_summary
 from syrupy.assertion import SnapshotAssertion
 
 from rocm_mq.state import (
@@ -28,6 +27,7 @@ from rocm_mq.state import (
     Squash,
     UpdateComment,
 )
+from rocm_mq.summary import render_cycle_summary
 
 
 def utc(

@@ -42,6 +42,7 @@ import ast
 from pathlib import Path
 
 import pytest
+
 import rocm_mq
 
 # ---------------------------------------------------------------------------
@@ -300,7 +301,58 @@ def test_test_files_no_naive_datetime_constructor() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 4: Positive regression — walker MUST flag a synthetic banned import
+# Test 4: Positive PURE-09 — I/O layer modules MUST import githubkit
+#
+# Symmetric guard to Test 1: if Test 1 catches "pure code accidentally pulled
+# in I/O imports", this test catches "I/O code accidentally pure-fied"
+# (e.g., someone replaces a real githubkit call with a stub and removes the
+# import, breaking the I/O contract silently).
+#
+# The list grows with Phase 2: gh.py exists after Plan 02-01; snapshot.py is
+# added in Plan 02-02; executor.py in Plan 02-03.  Until those modules exist
+# the parametrized case is skipped (not a failure) so this plan's test passes
+# in isolation while still asserting the contract for any module that does
+# exist.
+# ---------------------------------------------------------------------------
+
+IO_LAYER_MODULES: tuple[str, ...] = ("gh", "snapshot", "executor")
+
+
+@pytest.mark.parametrize("module_name", IO_LAYER_MODULES)
+def test_io_modules_do_import_githubkit(module_name: str) -> None:
+    """Assert each rocm_mq I/O module imports githubkit (PURE-09 positive).
+
+    Skips when the module file does not yet exist (Plans 02-02 / 02-03 add
+    ``snapshot.py`` and ``executor.py``).  Once the module exists, the test
+    walks its imports and asserts at least one is ``githubkit`` or a
+    ``githubkit.*`` submodule.
+
+    Failure message includes the module name so a regression is actionable on
+    first read.
+    """
+    src_path = _ROCM_MQ_SRC_DIR / f"{module_name}.py"
+    if not src_path.exists():
+        pytest.skip(f"rocm_mq.{module_name} not yet created (future plan)")
+    src = src_path.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    imports: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.add(alias.name)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.add(node.module)
+    has_githubkit = any(
+        name == "githubkit" or name.startswith("githubkit.") for name in imports
+    )
+    assert has_githubkit, (
+        f"rocm_mq.{module_name} does not import githubkit — "
+        f"is it accidentally pure? I/O modules must import githubkit."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Positive regression — walker MUST flag a synthetic banned import
 # (T-01-16: guards against a silent no-op refactor of the walker)
 # ---------------------------------------------------------------------------
 

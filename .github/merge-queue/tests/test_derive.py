@@ -13,7 +13,7 @@ Coverage (per PLAN.md Task 2):
 
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import UTC
 
 import pytest
 from hypothesis import given, settings
@@ -28,8 +28,8 @@ from rocm_mq.state import (
     DeferredPR,
     LabelEvent,
     MergeQueueConfig,
-    PRState,
     PartialPRState,
+    PRState,
     RawPRState,
     RawSnapshot,
     RequiredCheckResult,
@@ -61,7 +61,7 @@ def _utc(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> obj
     """Small tz-aware datetime helper (mirrors conftest.utc)."""
     from datetime import datetime
 
-    return datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
+    return datetime(year, month, day, hour, minute, tzinfo=UTC)
 
 
 def _app_actor() -> TimelineActor:
@@ -104,7 +104,7 @@ def _canonical_status(config: MergeQueueConfig = _CONFIG) -> CommitStatus:
         context=config.activation_status_context,
         state="success",
         creator=creator,
-        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
 
@@ -117,7 +117,7 @@ def test_derive_pr__case1_normal_returns_pr_state() -> None:
     """Case 1: App-applied mq:queued event → returns PRState with correct fields."""
     from datetime import datetime
 
-    enqueue_time = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+    enqueue_time = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
     raw = RawPRState(
         number=42,
         head_sha="abc1234",
@@ -143,8 +143,8 @@ def test_derive_pr__case1_enqueued_at_uses_most_recent_app_event() -> None:
     """Case 1: enqueued_at = max(app events) — re-enqueue moves to back of queue."""
     from datetime import datetime
 
-    t1 = datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
-    t2 = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+    t1 = datetime(2026, 1, 1, 9, 0, tzinfo=UTC)
+    t2 = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
     raw = RawPRState(
         number=10,
         head_sha="sha1",
@@ -166,7 +166,7 @@ def test_derive_pr__case1_queues_excludes_state_labels() -> None:
     """Case 1: queues strips mq:queued and mq:active from label set."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     raw = RawPRState(
         number=11,
         head_sha="sha2",
@@ -190,7 +190,7 @@ def test_derive_pr__case2_label_without_event_returns_deferred() -> None:
     """Case 2: mq:queued label present but mq_queued_label_events=() → DeferredPR."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     raw = RawPRState(
         number=20,
         head_sha="sha3",
@@ -210,7 +210,7 @@ def test_derive_pr__case2_deferred_reason_is_descriptive() -> None:
     """Case 2: DeferredPR reason string gives enough info for debugging."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     raw = RawPRState(
         number=21,
         head_sha="sha4",
@@ -235,7 +235,7 @@ def test_derive_pr__case3_non_app_event_only_returns_deferred() -> None:
     """Case 3: Only non-App mq:queued events → DeferredPR with 'non-App actor' reason."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     raw = RawPRState(
         number=30,
         head_sha="sha5",
@@ -257,7 +257,7 @@ def test_derive_pr__case3_non_app_event_even_with_label_is_deferred() -> None:
     """Case 3 precedence: non-App event is caught even when the label is present."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     raw = RawPRState(
         number=31,
         head_sha="sha6",
@@ -277,7 +277,7 @@ def test_derive_pr__no_enqueue_evidence_returns_deferred() -> None:
     """Case 'no evidence': no label AND no events → DeferredPR."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     raw = RawPRState(
         number=32,
         head_sha="sha7",
@@ -357,7 +357,7 @@ def test_derive_pr__is_validly_active_matrix(
     """is_validly_active matrix: context filter AND creator filter both required."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     creator = CommitStatusCreator(
         login=str(creator_kwargs["login"]),
         type=str(creator_kwargs["type"]),
@@ -393,7 +393,7 @@ def test_derive_pr__no_head_statuses_is_not_validly_active() -> None:
     """No head_statuses → is_validly_active=False."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     raw = RawPRState(
         number=51,
         head_sha="sha9",
@@ -412,7 +412,7 @@ def test_derive_pr__multiple_statuses_one_valid_is_validly_active() -> None:
     """Multiple statuses where only one is valid → is_validly_active=True."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     bad_creator = CommitStatusCreator(
         login="github-actions[bot]",
         type="Bot",
@@ -499,7 +499,7 @@ def test_property__adversarial_creator_yields_not_validly_active(
     """For any non-canonical creator on merge-queue/active status, is_validly_active=False."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     status = CommitStatus(
         context=_CONFIG.activation_status_context,  # right context, wrong creator
         state="success",
@@ -529,7 +529,7 @@ def test_derive_snapshot__normal_prs_go_into_snapshot() -> None:
     """derive_snapshot: fully derivable PRs appear in Snapshot.prs."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     app_actor = _app_actor()
     raw_snap = RawSnapshot(
         prs=(
@@ -564,7 +564,7 @@ def test_derive_snapshot__deferred_prs_emit_defer_actions() -> None:
     """derive_snapshot: un-derivable PRs emit Defer actions with PartialPRState."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     raw_snap = RawSnapshot(
         prs=(
             # Normal PR
@@ -603,7 +603,7 @@ def test_derive_snapshot__returns_correct_types() -> None:
     """derive_snapshot returns (Snapshot, tuple[Defer, ...])."""
     from datetime import datetime
 
-    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 1, tzinfo=UTC)
     raw_snap = RawSnapshot(prs=())
     snapshot, defers = derive_snapshot(raw_snap, _CONFIG, t)
     assert isinstance(snapshot, Snapshot)

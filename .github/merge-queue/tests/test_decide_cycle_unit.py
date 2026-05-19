@@ -13,16 +13,12 @@ Question 2 resolution.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 from rocm_mq.decision import decide_cycle
 from rocm_mq.state import (
     Activate,
     AppIdentity,
-    CommitStatus,
-    CommitStatusCreator,
     Eject,
     MergeQueueConfig,
     PRState,

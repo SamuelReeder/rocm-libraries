@@ -311,7 +311,7 @@ def test_property__hipdnn_path_implies_all_queues(
 ) -> None:
     """Any path list that includes a projects/hipdnn/ entry yields all six queues."""
     hipdnn_path = "projects/hipdnn/api/foo.h"
-    paths = tuple([hipdnn_path, *other_paths])
+    paths = (hipdnn_path, *other_paths)
     config = canonical_config()
     result = queues_for_paths(paths, config)
     assert "hipdnn" in result
@@ -338,7 +338,7 @@ def test_property__integration_tests_without_hipdnn_path(
 ) -> None:
     """integration-tests path + any non-hipdnn paths → result does NOT contain hipdnn."""
     int_tests_path = "dnn-providers/integration-tests/foo.py"
-    paths = tuple([int_tests_path, *other_paths])
+    paths = (int_tests_path, *other_paths)
     config = canonical_config()
     result = queues_for_paths(paths, config)
     assert "hipdnn" not in result
