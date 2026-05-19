@@ -16,7 +16,7 @@
 ## Phases
 
 - [x] **Phase 1: Pure Decision Layer** - Frozen-dataclass state model + pure `decide_cycle` + property-tested §6 invariants on synthetic snapshots
-- [ ] **Phase 2: I/O Layer + Executor** - REST client, snapshot builder, action executor with activation state machine, in-memory fake, end-to-end loop on canned data
+- [x] **Phase 2: I/O Layer + Executor** - REST client, snapshot builder, action executor with activation state machine, in-memory fake, end-to-end loop on canned data
 - [ ] **Phase 3: Handler + Processor on Fork** - `mq-handler.yml`, `mq-processor.yml`, App registration on fork, full §6 fork-dogfood scenarios pass against real CI
 - [ ] **Phase 4: Audit, Managed-Status, Validator** - `pull_request_target` audit + `merge-queue/managed` poster + `PATH_TO_QUEUES` validator + self-bootstrap protection; full §4.3.1 tamper matrix demonstrably ejects on the fork
 - [ ] **Phase 5: Porting Prep** - Operations runbook, pre-flight checklist, RFC tweaks log, README, squash-clean PR-ready branch against upstream `develop`
@@ -119,7 +119,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Pure Decision Layer | 5/5 | Complete | 2026-05-18 |
-| 2. I/O Layer + Executor | 0/4 | Planned | - |
+| 2. I/O Layer + Executor | 5/5 | Complete | 2026-05-19 |
 | 3. Handler + Processor on Fork | 0/17 | Planned | - |
 | 4. Audit, Managed-Status, Validator | 0/? | Not started | - |
 | 5. Porting Prep | 0/? | Not started | - |
