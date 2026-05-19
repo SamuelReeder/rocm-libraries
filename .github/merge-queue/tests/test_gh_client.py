@@ -45,10 +45,15 @@ def _make_secondary_rate_limit_exc(retry_after_seconds: float = 0.0) -> Secondar
 
 
 def _make_request_failed_exc(status_code: int = 500) -> RequestFailed:
-    """Construct a RequestFailed without a real httpx.Response."""
-    exc = RequestFailed.__new__(RequestFailed)
-    exc.response = SimpleNamespace(status_code=status_code)
-    return exc
+    """Construct a RequestFailed without a real httpx.Response.
+
+    Delegates to the canonical shim in ``tests.gh_fake._make_request_failed``
+    (WR-09). Two parallel ``RequestFailed.__new__`` constructors invited
+    drift if githubkit's exception shape changes; one owning home is safer.
+    """
+    from tests.gh_fake import _make_request_failed
+
+    return _make_request_failed(status_code)
 
 
 # ---------------------------------------------------------------------------
@@ -270,3 +275,33 @@ def test_corrupt_squash_error_is_runtime_error() -> None:
     assert isinstance(err, RuntimeError)
     assert isinstance(err, CorruptSquashError)
     assert str(err) == "post-squash verification failed: wrong parent SHA"
+
+
+# ---------------------------------------------------------------------------
+# 5. WR-09: _make_request_failed shim smoke test
+# ---------------------------------------------------------------------------
+
+
+def test_make_request_failed_shim__roundtrip_does_not_raise() -> None:
+    """The shim must produce a usable RequestFailed (WR-09 regression guard).
+
+    Bypassing __init__ via __new__ + attribute assignment means the
+    constructed exception may be missing fields githubkit's __init__
+    would set. Exercise the attribute-access surface the executor
+    actually uses (``.response.status_code``) AND assert ``repr(exc)``
+    does not raise — a missing attribute in __init__ would typically
+    surface there first.
+
+    Consolidated into one home in tests/gh_fake (WR-09); previously a
+    duplicate shim lived here and the two could drift independently.
+    """
+    from tests.gh_fake import _make_request_failed
+
+    exc = _make_request_failed(404)
+    assert isinstance(exc, RequestFailed)
+    assert exc.response.status_code == 404
+    # Calling repr() exercises any attribute __init__ would have populated.
+    # If a future githubkit release adds a __repr__ that reads an
+    # __init__-only attribute, this assertion catches the drift ahead of
+    # the executor's catch path seeing it.
+    assert repr(exc)

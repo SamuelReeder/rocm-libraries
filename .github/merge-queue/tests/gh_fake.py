@@ -86,11 +86,32 @@ def _make_request_failed(status_code: int) -> RequestFailed:
     """Construct a real RequestFailed via __new__ to avoid the httpx.Response dep.
 
     The executor's ``except RequestFailed as e: if e.response.status_code == 404``
-    pattern reads only ``.response.status_code``, so a SimpleNamespace shim is
-    sufficient. Matches the pattern used in tests/test_gh_client.py.
+    pattern reads only ``.response.status_code``, so the response surface is
+    intentionally minimal. ``repr(exc)`` (read by logs, error messages, and
+    pytest's failure renderer) walks attributes that ``__init__`` would have
+    populated — populate ``.request`` defensively so ``repr`` does not raise
+    in test failure paths (WR-09).
+
+    This shim is the SINGLE owning home; ``tests/test_gh_client.py`` imports
+    from here rather than maintaining a parallel copy.
     """
     exc = RequestFailed.__new__(RequestFailed)
-    exc.response = SimpleNamespace(status_code=status_code)  # type: ignore[assignment]
+    # The response shim must carry every attribute githubkit's
+    # RequestFailed.__repr__ reads. Today that includes status_code and
+    # _status_reason; the shape is validated by
+    # test_make_request_failed_shim__roundtrip_does_not_raise so a future
+    # githubkit bump that adds a new read-in-repr attribute fails the
+    # smoke test rather than the executor's catch path at runtime.
+    exc.response = SimpleNamespace(  # type: ignore[assignment]
+        status_code=status_code,
+        _status_reason=f"HTTP {status_code} (test shim)",
+        url="https://github.test/shim",
+    )
+    # githubkit's RequestFailed.__repr__ reads .request.method + .request.url.
+    exc.request = SimpleNamespace(  # type: ignore[assignment]
+        method="GET",
+        url="https://github.test/shim",
+    )
     return exc
 
 
