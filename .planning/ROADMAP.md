@@ -69,7 +69,25 @@ Plans:
   4. Every RFC §6 fork-dogfood scenario demonstrably ejects with the documented reason on the fork against real CI: merge conflict at activation (`"merge conflict with develop"`), CI red during evaluation (named failed check), simultaneous `/merge` (idempotent, no duplicate state), author push between activation and squash (`"activation invalid (branch updated or label tampered)"`), approval revoked between enqueue and squash (`"approval revoked"`), `/merge` on PR touching no opted-in path (handler-level rejection).
   5. The full RFC §4.2 5-PR worked example replays end-to-end on the fork against real CI: A merges first, B and C merge in parallel, D merges next, E merges last — observable via PR timeline and processor `$GITHUB_STEP_SUMMARY` runs.
   6. Processor `--dry-run` flag emits the would-be `Action` list to stdout / `$GITHUB_STEP_SUMMARY` without invoking any executor mutator.
-**Plans**: TBD
+**Plans**: 17 plans
+Plans:
+- [ ] 03-00-PLAN.md — Carry-forward: re-run /gsd-verify-work 2 to clear stale 02-VERIFICATION.md (operational hygiene only)
+- [ ] 03-01-PLAN.md — Argparse subcommand refactor of cmd_process.py + handle/audit/preflight stubs (W-5 LOCKED debt repaid)
+- [ ] 03-02-PLAN.md — config.py with SELF_BOOTSTRAP_PATHS constant + load_from_develop loader + APP_SLUG/APP_ID env helpers (WF-08)
+- [ ] 03-03-PLAN.md — Hand-written path_to_queues.yml + live fork verification of paths/queues/required-check name
+- [ ] 03-04-PLAN.md — preflight.py module (default-branch + path_to_queues-loadable checks) + cmd_process.run_preflight wired (WF-10)
+- [ ] 03-05-PLAN.md — Operator: register rocm-mq-fork GitHub App on the fork + mq-secrets Environment with develop-only deployment-branch rule (WF-09)
+- [ ] 03-06-PLAN.md — cmd_handle.py: /merge + /dequeue parser, live perm check, at-enqueue gates, self-bootstrap rejection, label apply, status comment upsert, eyes-reaction (WF-01, WF-02, WF-03, WF-11, WF-12)
+- [ ] 03-07-PLAN.md — mq-handler.yml workflow: trigger surface + per-job permissions + audit-stub job (WF-01, WF-08, WF-09, WF-10)
+- [ ] 03-08-PLAN.md — mq-processor.yml workflow: cron + dispatch + STATIC concurrency + cycle-summary.md artifact upload (WF-04, WF-05, WF-06, WF-07, WF-08, WF-09, WF-10)
+- [ ] 03-09-PLAN.md — mq-dogfood-canary.yml workflow: title-marker deterministic CI-fail signal for DOG-03
+- [ ] 03-10-PLAN.md — dogfood subpackage scaffolding: __init__.py + _base.py (DogfoodResult + create_dogfood_pr + post_command + poll_pr_state + emit_result + download_cycle_summary_artifact)
+- [ ] 03-11-PLAN.md — DOG-02 + DOG-04 + DOG-08 drivers (short-scenario group)
+- [ ] 03-12-PLAN.md — DOG-03 driver (CI failure via canary)
+- [ ] 03-13-PLAN.md — DOG-05 driver (author push after activation)
+- [ ] 03-14-PLAN.md — DOG-06 driver: 5-PR RFC §4.2 worked example (marquee + Phase 5 porting-prep reference)
+- [ ] 03-15-PLAN.md — DOG-07 driver: approval revoked (PRE-CONFIRM second-account approver mechanism)
+- [ ] 03-16-PLAN.md — Dogfood aggregator + DOGFOOD-RESULTS.md generation (Phase 3 verification artifact for DOG-02..DOG-08)
 **UI hint**: yes
 
 ### Phase 4: Audit, Managed-Status, Validator
@@ -102,7 +120,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Pure Decision Layer | 5/5 | Complete | 2026-05-18 |
 | 2. I/O Layer + Executor | 0/4 | Planned | - |
-| 3. Handler + Processor on Fork | 0/? | Not started | - |
+| 3. Handler + Processor on Fork | 0/17 | Planned | - |
 | 4. Audit, Managed-Status, Validator | 0/? | Not started | - |
 | 5. Porting Prep | 0/? | Not started | - |
 
@@ -145,3 +163,4 @@ Standard patterns (skip dedicated research):
 ---
 *Roadmap created: 2026-05-14*
 *Phase 2 plans added: 2026-05-18*
+*Phase 3 plans added: 2026-05-19*
