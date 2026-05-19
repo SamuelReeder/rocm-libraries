@@ -223,6 +223,44 @@ class _ReposNS:
         parents = [SimpleNamespace(sha=p) for p in commit_meta.get("parents", [])]
         return _resp(SimpleNamespace(sha=ref, parents=parents))
 
+    def compare_commits(
+        self,
+        owner: str,
+        repo: str,
+        *args: Any,
+        basehead: str | None = None,
+        **kwargs: Any,
+    ) -> SimpleNamespace:
+        """Models GitHub's ``GET /repos/{owner}/{repo}/compare/{basehead}`` endpoint.
+
+        Returns the ``(status, files)`` shape ``_verify_squash`` Phase B reads
+        to defend against the Pitfall 8 / April-2026 silent-corruption pattern:
+        a squash whose first parent matches develop's tip but whose tree is
+        empty or identical to the pre-merge tip.
+
+        Default response shape is the happy path — ``status='ahead'`` plus a
+        single-file modification — so existing tests that exercise
+        ``_verify_squash`` continue to pass once Phase B lands. Tests that
+        need corruption shapes (``status='identical'``, ``status='diverged'``,
+        ``status='behind'``, or ``files=[]``) monkeypatch this method
+        directly per the gh_fake.py convention (see the ``flaky_get_commit``
+        pattern in tests/test_executor.py).
+
+        Accepts both the ``basehead=`` kwarg form (matches the API URL shape
+        ``GET /repos/{owner}/{repo}/compare/{base}...{head}``) and any extra
+        positional/keyword arguments so the executor can use either call
+        shape (``compare_commits(owner, repo, basehead=...)`` or
+        ``compare_commits(owner, repo, base, head)``) without forcing a
+        fake-side rework.
+        """
+        del args, basehead, kwargs  # surface-only; default fake is shape-agnostic
+        return _resp(
+            SimpleNamespace(
+                status="ahead",
+                files=[SimpleNamespace(filename="dummy.txt", status="modified")],
+            )
+        )
+
 
 class _IssuesNS:
     def __init__(self, state: FakeRepoState) -> None:

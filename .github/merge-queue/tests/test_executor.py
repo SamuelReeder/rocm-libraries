@@ -818,6 +818,155 @@ def test_verify_squash__get_commit_404_three_times__raises(
     assert attempts["n"] == 3
 
 
+# ---------------------------------------------------------------------------
+# Phase B — tree-diff sanity (SC#3 / Pitfall 8 silent-corruption defence)
+# ---------------------------------------------------------------------------
+
+
+def _seed_phase_a_passing_fake(
+    *,
+    number: int = 42,
+    head_sha: str = "head_sha_aaa",
+    squash_sha: str = "squash_sha_phaseB",
+    pre_squash_develop_sha: str = "develop_tip_xyz",
+) -> tuple[FakeGitHub, PRState]:
+    """Build a fake + PRState where Phase A (parents[0]) already passes.
+
+    Phase B tests want to isolate the tree-diff check: they need the parent
+    SHA assertion to succeed so that any raise is unambiguously a Phase B
+    verdict. Seed ``commits[squash_sha]`` with the matching parent SHA.
+    """
+    fake = _make_fake_with_pr(number=number, head_sha=head_sha)
+    fake.state.commits[squash_sha] = {
+        "parents": [pre_squash_develop_sha],
+        "message": f"Squash #{number}",
+    }
+    pr = _make_pr_state(number=number, head_sha=head_sha)
+    return fake, pr
+
+
+def test_verify_squash__tree_diff_status_identical__raises_corrupt_squash_error() -> None:
+    """Phase B failure: status='identical' means squash equals pre-merge tip.
+
+    The squash commit's first parent correctly points at develop's tip
+    (Phase A passes), but ``compare_commits(base...head)`` reports the two
+    SHAs are content-identical — i.e. the squash applied no changes. This
+    is the canonical Pitfall 8 / April-2026 silent-corruption shape; Phase B
+    MUST reject it.
+    """
+    from rocm_mq import executor
+
+    fake, pr = _seed_phase_a_passing_fake()
+
+    fake.rest.repos.compare_commits = lambda *a, **kw: SimpleNamespace(  # type: ignore[assignment]
+        parsed_data=SimpleNamespace(
+            status="identical",
+            files=[SimpleNamespace(filename="x.py", status="modified")],
+        )
+    )
+
+    with pytest.raises(CorruptSquashError) as exc_info:
+        executor._verify_squash(
+            client=fake,
+            owner="org",
+            repo="repo",
+            pr=pr,
+            pre_squash_develop_sha="develop_tip_xyz",
+            squash_sha="squash_sha_phaseB",
+        )
+    msg = str(exc_info.value)
+    assert "identical" in msg  # status value surfaced for operator triage
+    assert str(pr.number) in msg  # PR number for log lookup
+    assert "squash_sha_phaseB" in msg  # squash SHA for traceability
+
+
+def test_verify_squash__tree_diff_files_empty__raises_corrupt_squash_error() -> None:
+    """Phase B failure: files=[] is the literal Apr-2026 silent-corruption shape.
+
+    Status appears OK (``ahead``) but the changed-files list is empty: the
+    squash advanced develop with a commit that touched zero files. This is
+    exactly the silent-corruption pattern the RFC's Pitfall 8 was added to
+    defend against and SC#3's "plus tree-diff sanity" clause names.
+    """
+    from rocm_mq import executor
+
+    fake, pr = _seed_phase_a_passing_fake()
+
+    fake.rest.repos.compare_commits = lambda *a, **kw: SimpleNamespace(  # type: ignore[assignment]
+        parsed_data=SimpleNamespace(status="ahead", files=[])
+    )
+
+    with pytest.raises(CorruptSquashError) as exc_info:
+        executor._verify_squash(
+            client=fake,
+            owner="org",
+            repo="repo",
+            pr=pr,
+            pre_squash_develop_sha="develop_tip_xyz",
+            squash_sha="squash_sha_phaseB",
+        )
+    msg = str(exc_info.value)
+    msg_lower = msg.lower()
+    assert "files" in msg_lower or "empty" in msg_lower
+    assert str(pr.number) in msg
+    assert "squash_sha_phaseB" in msg
+
+
+def test_verify_squash__tree_diff_ahead_with_files__returns_ok() -> None:
+    """Phase B happy path: status='ahead' + non-empty files → returns None.
+
+    Uses the FakeGitHub default compare_commits response (status='ahead',
+    one-file change). Phase A is already arranged to pass; Phase B must
+    accept this shape.
+    """
+    from rocm_mq import executor
+
+    fake, pr = _seed_phase_a_passing_fake()
+
+    # No monkeypatch — rely on the fake's happy-path default.
+    executor._verify_squash(
+        client=fake,
+        owner="org",
+        repo="repo",
+        pr=pr,
+        pre_squash_develop_sha="develop_tip_xyz",
+        squash_sha="squash_sha_phaseB",
+    )
+
+
+def test_verify_squash__tree_diff_status_diverged__raises_corrupt_squash_error() -> None:
+    """Phase B failure: status='diverged' means squash does not advance develop.
+
+    Pins the rule "anything other than 'ahead' with non-empty files is
+    corruption". A diverged comparison means develop and the squash share a
+    common ancestor but neither contains the other — impossible if the
+    squash truly applied the PR's changes on top of develop's tip.
+    """
+    from rocm_mq import executor
+
+    fake, pr = _seed_phase_a_passing_fake()
+
+    fake.rest.repos.compare_commits = lambda *a, **kw: SimpleNamespace(  # type: ignore[assignment]
+        parsed_data=SimpleNamespace(
+            status="diverged",
+            files=[SimpleNamespace(filename="x.py", status="modified")],
+        )
+    )
+
+    with pytest.raises(CorruptSquashError) as exc_info:
+        executor._verify_squash(
+            client=fake,
+            owner="org",
+            repo="repo",
+            pr=pr,
+            pre_squash_develop_sha="develop_tip_xyz",
+            squash_sha="squash_sha_phaseB",
+        )
+    msg = str(exc_info.value)
+    assert "diverged" in msg
+    assert str(pr.number) in msg
+
+
 def test_handle_squash__verify_failure__returns_failure_outcome(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
