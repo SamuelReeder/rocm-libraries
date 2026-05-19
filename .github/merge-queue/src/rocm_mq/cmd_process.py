@@ -49,6 +49,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import traceback
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -351,7 +352,10 @@ def main(argv: list[str] | None = None) -> int:
             now=now,
         )
     except Exception as exc:  # pragma: no cover  (orchestrator catch-all)
+        # Preserve the traceback — operators debugging a production cycle
+        # failure need module:line attribution, not just repr(exc) (WR-04).
         print(f"error: process_cycle raised: {exc!r}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return 1
 
     # Exit non-zero if any outcome failed. CorruptSquashError already arrives
