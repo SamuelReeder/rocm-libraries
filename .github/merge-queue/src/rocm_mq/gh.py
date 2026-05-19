@@ -8,8 +8,10 @@ modules (snapshot.py, executor.py, cmd_process.py) consume this module's
 ``GitHubClient`` and never touch githubkit directly.
 
 Public surface (Phase 2 contract):
-- ``GitHubClient(token: str)`` — sync wrapper exposing ``.rest`` passthrough +
-  ``request_with_retry`` for SecondaryRateLimitExceeded handling.
+- ``GitHubClient(token: str)`` — sync wrapper exposing ``.rest`` (a
+  ``_RetryProxy`` over the githubkit rest switcher; every method call
+  automatically goes through ``request_with_retry``, WR-01) +
+  ``request_with_retry`` for callers needing explicit control.
 - ``resolve_app_identity(client) -> AppIdentity`` — startup call that resolves
   ``bot_user_id`` via the two-step ``apps.get_authenticated`` +
   ``users.get_by_username(slug + "[bot]")`` pattern. Addresses OQ-1 / A1 from
@@ -60,6 +62,58 @@ class CorruptSquashError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
+class _RetryProxy:
+    """Wraps a githubkit namespace so every callable goes through retry (WR-01).
+
+    Attribute lookup on the wrapped object returns:
+    - For callables (the actual API methods like ``repos.merge``,
+      ``pulls.get``): a function that runs the call through
+      ``GitHubClient.request_with_retry`` so transient
+      ``SecondaryRateLimitExceeded`` is absorbed transparently.
+    - For non-callables (sub-namespaces like ``repos``, ``pulls``,
+      ``issues``): another ``_RetryProxy`` wrapping the sub-namespace,
+      so chained access (``client.rest.repos.merge(...)``) is also
+      retry-wrapped.
+
+    This lets callers write plain method calls
+    (``client.rest.pulls.get(owner, repo, n)``) without sprinkling
+    ``request_with_retry`` lambdas at every site. The previous
+    ``request_with_retry(fn, *args, **kwargs)`` method is kept for direct
+    use, but callers that go through ``client.rest`` get retry for free.
+
+    The proxy does NOT intercept attribute assignment: tests that drive
+    the fake (``FakeGitHub``) never see this proxy because they replace
+    ``client`` entirely with the fake. The proxy only sits on top of the
+    real githubkit client.
+    """
+
+    def __init__(self, wrapped: Any, retry_call: Callable[..., Any]) -> None:
+        # Use object.__setattr__ to avoid triggering __setattr__ recursion if
+        # we ever add custom behaviour there.
+        object.__setattr__(self, "_wrapped", wrapped)
+        object.__setattr__(self, "_retry_call", retry_call)
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._wrapped, name)
+        # Always wrap in another proxy. The proxy is also callable
+        # (see __call__) so leaf method invocation goes through
+        # request_with_retry, and chained access (.repos.merge) still
+        # works because each intermediate proxy is itself a _RetryProxy.
+        # This deliberately handles both the production case (githubkit
+        # bound methods and namespace classes) and the test case
+        # (MagicMock / SimpleNamespace stand-ins where the type
+        # discrimination between namespace vs method is unavailable).
+        return _RetryProxy(attr, self._retry_call)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        # Leaf-method invocation: run the wrapped callable through the
+        # retry helper. If the wrapped object is not callable, the
+        # underlying call below will raise TypeError naturally — matching
+        # the behaviour the caller would have seen against the raw
+        # githubkit object.
+        return self._retry_call(self._wrapped, *args, **kwargs)
+
+
 class GitHubClient:
     """Sync wrapper around githubkit.GitHub.
 
@@ -67,9 +121,10 @@ class GitHubClient:
     ``actions/create-github-app-token@v3`` in the GHA workflow). No App private
     key handling — that surface stays in the GHA action per CLAUDE.md.
 
-    Exposes ``.rest`` as a passthrough to ``githubkit.GitHub.rest`` and
-    ``.request_with_retry(fn, *args, **kwargs)`` for callers that need
-    SecondaryRateLimitExceeded retry semantics.
+    Exposes ``.rest`` as a passthrough to ``githubkit.GitHub.rest`` WRAPPED in
+    a ``_RetryProxy`` so every API method call is automatically run through
+    ``request_with_retry`` (WR-01). ``request_with_retry`` is still exposed for
+    callers that need explicit control (e.g., to override ``max_retries``).
     """
 
     def __init__(self, token: str) -> None:
@@ -79,14 +134,19 @@ class GitHubClient:
 
     @property
     def rest(self) -> Any:
-        """Forward to ``githubkit.GitHub.rest``.
+        """Forward to ``githubkit.GitHub.rest`` wrapped in ``_RetryProxy``.
 
         Typed as ``Any`` to avoid pulling githubkit's RestVersionSwitcher type
         into the static surface — Phase 2 callers use the namespaces directly
         (e.g., ``client.rest.apps.get_authenticated()``) and githubkit's own
         typed responses cover the per-call return shapes.
+
+        The returned object is a fresh ``_RetryProxy`` over the current
+        ``self._gh.rest``; building per-access (rather than caching in
+        ``__init__``) keeps tests that swap ``self._gh`` post-construction
+        working transparently (test_gh_client._make_resolve_client).
         """
-        return self._gh.rest
+        return _RetryProxy(self._gh.rest, self.request_with_retry)
 
     def request_with_retry(
         self,
@@ -105,6 +165,10 @@ class GitHubClient:
 
         Tests patch ``time.sleep`` (via ``monkeypatch.setattr("rocm_mq.gh.time.sleep",
         ...)``) to avoid real waits. Production code receives real sleeps.
+
+        WR-01: the ``_RetryProxy`` on ``self.rest`` calls this method
+        automatically for every API method, so callers normally do not need
+        to invoke it directly.
         """
         last_exc: SecondaryRateLimitExceeded | None = None
         for attempt in range(1, max_retries + 1):

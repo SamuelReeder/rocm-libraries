@@ -149,6 +149,41 @@ def test_retry_forwards_args_and_kwargs(monkeypatch: pytest.MonkeyPatch) -> None
     assert captured == {"a": 42, "b": "hello"}
 
 
+def test_rest_proxy__leaf_method_call_runs_through_request_with_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """client.rest.<ns>.<method>(...) must absorb SecondaryRateLimitExceeded (WR-01).
+
+    Regression guard: previously request_with_retry was a public method that
+    nobody called, so SecondaryRateLimitExceeded propagating out of any
+    snapshot/executor call site would kill the cycle. Now client.rest is a
+    _RetryProxy that runs every method through request_with_retry; the
+    transient rate-limit error is absorbed and the call retries
+    transparently.
+    """
+    monkeypatch.setattr("rocm_mq.gh.time.sleep", lambda _: None)
+
+    call_count = {"n": 0}
+
+    def flaky_get_authenticated() -> SimpleNamespace:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise _make_secondary_rate_limit_exc(retry_after_seconds=0)
+        return SimpleNamespace(parsed_data=SimpleNamespace(id=12345, slug="rocm-mq"))
+
+    client = GitHubClient(token="ghs_test_token")
+    rest_shim = SimpleNamespace(
+        apps=SimpleNamespace(get_authenticated=flaky_get_authenticated)
+    )
+    client._gh = SimpleNamespace(rest=rest_shim)  # type: ignore[attr-defined]
+
+    # The call site looks identical to production code (no explicit
+    # request_with_retry) yet still retries on SecondaryRateLimitExceeded.
+    resp = client.rest.apps.get_authenticated()
+    assert call_count["n"] == 2, "expected one retry after SecondaryRateLimitExceeded"
+    assert resp.parsed_data.slug == "rocm-mq"
+
+
 # ---------------------------------------------------------------------------
 # 3. resolve_app_identity
 # ---------------------------------------------------------------------------
