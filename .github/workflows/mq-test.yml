@@ -1,0 +1,57 @@
+# NOTE: This file is in SELF_BOOTSTRAP_PATHS — /merge on PRs touching this
+# file requires manual maintainer merge (RFC §8). The Phase 3 handler will
+# reject the auto-enqueue path when this file (or anything else under
+# .github/workflows/**) is in the diff.
+#
+# Phase 2 DOG-01 delivery: full per-commit pytest suite (PURE + IO contract +
+# executor + Hypothesis) runs green in CI on every push to the fork branch
+# and every PR targeting develop.
+
+name: Merge Queue Tests
+
+on:
+  push:
+    branches:
+      - develop
+      - users/sareeder/**
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .github/merge-queue
+
+    steps:
+      - name: Checkout
+        # Pinned per RFC §8 self-bootstrap protection — promote to SHA pin
+        # in a follow-up that lands the SELF_BOOTSTRAP_PATHS audit job.
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: python -m ruff check .
+
+      - name: Type check (mypy)
+        # mypy is non-strict by default; strict mode is opt-in per pyproject.toml
+        # [[tool.mypy.overrides]] on the six pure-layer modules. Pre-existing
+        # warnings in tests/gh_fake.py and src/rocm_mq/snapshot.py are tracked
+        # in 02-01-SUMMARY / 02-02-SUMMARY (out of scope for this workflow).
+        run: python -m mypy src/rocm_mq/
+        continue-on-error: true
+
+      - name: Run tests
+        env:
+          CI: "1"  # activates Hypothesis 'ci' profile (500 examples)
+        run: python -m pytest -q
