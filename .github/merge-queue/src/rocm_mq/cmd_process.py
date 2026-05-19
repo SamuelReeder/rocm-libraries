@@ -218,9 +218,27 @@ def _build_fake_client() -> Any:
     reference ``tests.gh_fake`` — only the ``--fake`` flag triggers the
     import. Tests can also monkeypatch this helper to inject a pre-seeded
     fake (see test_main__dry_run_fake__no_state_mutation).
+
+    ``--fake`` mode requires the ``tests/`` directory to be on the Python
+    import path. The wheel build (``pyproject.toml`` ``packages =
+    ["src/rocm_mq"]``) ships only the package source — running ``--fake``
+    against a wheel-installed copy produces a ``ModuleNotFoundError``.
+    Catch that and emit an actionable message rather than a bare stack
+    trace (WR-07).
     """
     # Conditional import — only happens when --fake is set.
-    from tests.gh_fake import FakeGitHub, FakeRepoState
+    try:
+        from tests.gh_fake import FakeGitHub, FakeRepoState
+    except ModuleNotFoundError as exc:
+        print(
+            "error: --fake mode requires the tests/ directory on the Python "
+            "import path. The wheel build excludes tests/ (pyproject.toml "
+            "`packages = [\"src/rocm_mq\"]`), so --fake only works from an "
+            "editable install (`pip install -e .[dev]`). Re-install in "
+            "editable mode or drop --fake to use the real GitHub API.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from exc
 
     return FakeGitHub(FakeRepoState())
 
