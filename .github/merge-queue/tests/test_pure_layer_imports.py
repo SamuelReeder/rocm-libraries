@@ -42,6 +42,7 @@ import ast
 from pathlib import Path
 
 import pytest
+
 import rocm_mq
 
 # ---------------------------------------------------------------------------

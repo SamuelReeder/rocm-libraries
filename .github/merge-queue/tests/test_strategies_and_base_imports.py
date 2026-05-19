@@ -5,7 +5,6 @@ These tests fail until those modules exist and export the correct names.
 This is a structural TDD test — it verifies the module contract before implementation.
 """
 
-import pytest
 
 
 def test_strategies_module_exists():
@@ -73,7 +72,9 @@ def test_base_imports_config_from_conftest_not_strategies():
         "from tests.conftest import" in base_src
         and "canonical_merge_queue_config" in base_src
     ), "_state_machine_base.py must import canonical_merge_queue_config from tests.conftest"
-    assert (
-        "from tests._strategies import" not in base_src
-        or "canonical_merge_queue_config" not in base_src.split("from tests._strategies import")[1].split("\n")[0]
-    ), "_state_machine_base.py must NOT import canonical_merge_queue_config from tests._strategies"
+    if "from tests._strategies import" in base_src:
+        first_strategies_import = base_src.split("from tests._strategies import")[1].split("\n")[0]
+        assert "canonical_merge_queue_config" not in first_strategies_import, (
+            "_state_machine_base.py must NOT import canonical_merge_queue_config "
+            "from tests._strategies"
+        )
