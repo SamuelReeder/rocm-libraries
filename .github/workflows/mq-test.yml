@@ -45,11 +45,11 @@ jobs:
 
       - name: Type check (mypy)
         # mypy is non-strict by default; strict mode is opt-in per pyproject.toml
-        # [[tool.mypy.overrides]] on the six pure-layer modules. Pre-existing
-        # warnings in tests/gh_fake.py and src/rocm_mq/snapshot.py are tracked
-        # in 02-01-SUMMARY / 02-02-SUMMARY (out of scope for this workflow).
-        run: python -m mypy src/rocm_mq/
-        continue-on-error: true
+        # [[tool.mypy.overrides]] on the six pure-layer modules. CLAUDE.md
+        # ("mypy --strict on the decision layer is load-bearing") forbids
+        # `continue-on-error: true` here — type regressions on the pure layer
+        # MUST fail CI rather than ship silently (CR-04).
+        run: python -m mypy src/rocm_mq/ tests/gh_fake.py
 
       - name: Run tests
         env:
