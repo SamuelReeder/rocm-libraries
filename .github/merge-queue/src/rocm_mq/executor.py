@@ -49,7 +49,12 @@ Private helpers (exposed for unit tests):
 - ``_verify_squash`` — retries ``repos.get_commit(squash_sha)`` up to 3 times
   on 404 (read-replication lag, RESEARCH.md UK-4). Asserts
   ``commit.parents[0].sha == pre_squash_develop_sha`` and raises
-  ``CorruptSquashError`` on mismatch.
+  ``CorruptSquashError`` on mismatch. WR-08: this assertion is conservative
+  — a benign cross-job race that advances develop between the pre-squash
+  ``get_branch`` read and the ``pulls.merge`` call causes a false-positive
+  ejection. The Phase 3 audit job is expected to provide independent
+  squash-provenance verification; until then, the false-positive risk is
+  accepted in exchange for deterministic Pitfall 8 corruption detection.
 - ``_handle_eject`` — overwrites the activation status to ``"failure"`` on
   ``pr.head_sha`` and removes every label starting with ``config.label_prefix``
   via ``_safe_remove_label`` (each 404 is swallowed independently).
@@ -357,6 +362,20 @@ def _verify_squash(
     On a mismatch, raises ``CorruptSquashError`` (RuntimeError subclass) with
     a descriptive message naming the PR number, the squash SHA, the expected
     parent, and the observed parent — Pitfall 8 / April 2026 incident defence.
+
+    Known limitation — TOCTOU window (WR-08): ``pre_squash_develop_sha`` is
+    captured from ``repos.get_branch("develop")`` BEFORE ``pulls.merge``.
+    Any process (the Phase 3 audit job, a manual merge, an external bot)
+    that advances develop in that window will cause this check to report a
+    false-positive ``CorruptSquashError`` and eject a perfectly valid
+    squash. The processor's own ``concurrency: mq-processor`` block
+    (RFC §4.7) prevents two processor cycles from racing each other, but
+    cross-job concurrency is NOT serialised at the GitHub API. Closing this
+    gap requires either (a) ancestry-walking from the parent SHA up to the
+    current develop tip (one extra ``repos.compare_commits`` call), or
+    (b) extending the Phase 3 audit job to re-verify squash provenance
+    independently. Until either lands, accept the false-positive ejection
+    risk in exchange for catching true Pitfall 8 corruption deterministically.
     """
     last_exc: RequestFailed | None = None
     commit: Any | None = None
