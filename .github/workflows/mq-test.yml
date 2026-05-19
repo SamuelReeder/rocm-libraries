@@ -18,6 +18,14 @@ on:
     branches:
       - develop
 
+# Bound GITHUB_TOKEN to read-only contents. The test workflow only checks out
+# the repo, installs deps, and runs pytest/ruff/mypy — no writes to issues,
+# PRs, statuses, or releases. Without this block the workflow inherits the
+# repo default, which can be silently flipped to read-write by a future
+# repository setting change (WR-05).
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
