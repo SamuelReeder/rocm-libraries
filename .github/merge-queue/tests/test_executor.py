@@ -116,6 +116,27 @@ def _patch_pulls_get_to_return_branch(
     fake.rest.pulls.get = patched_get  # type: ignore[assignment]
 
 
+def _patch_repos_merge_to_advance_pr_head(fake: FakeGitHub, pr_number: int) -> None:
+    """Make fake's repos.merge advance the PR's head_sha on a 201 (realistic).
+
+    The shipped FakeRepoState models develop_tip but does not update the PR's
+    head_sha when ``repos.merge(base=<pr-branch>, head="develop")`` returns 201.
+    In real GitHub, the merge commit IS the new PR head — the post-merge
+    ``pulls.get().head.sha`` equals the merge response's sha. This patch wires
+    that behaviour so the executor's pre-stamp race check observes a
+    consistent SHA.
+    """
+    real_merge = fake.rest.repos.merge
+
+    def patched_merge(owner: str, repo: str, **kwargs: Any) -> SimpleNamespace:
+        resp = real_merge(owner, repo, **kwargs)
+        if resp.status_code == 201 and resp.parsed_data is not None:
+            fake.state.prs[pr_number].head_sha = str(resp.parsed_data.sha)
+        return resp
+
+    fake.rest.repos.merge = patched_merge  # type: ignore[assignment]
+
+
 def _patch_repos_get_branch(
     fake: FakeGitHub, *, branch_sha: str | None = None
 ) -> None:
@@ -301,8 +322,9 @@ def test_activate__repos_merge_201__stamps_status_and_flips_labels() -> None:
 
     fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
     _patch_pulls_get_to_return_branch(fake, head_ref="feature-branch")
+    _patch_repos_merge_to_advance_pr_head(fake, 42)
     # develop_tip != PR head_sha → merge returns 201 with a new SHA;
-    # the fake mutates develop_tip but the PR's head_sha stays the same.
+    # patch advances PR head_sha to the merge SHA (real GitHub behaviour).
     config = canonical_merge_queue_config()
     pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
 
@@ -332,9 +354,11 @@ def test_activate__repos_merge_204__uses_current_head_sha() -> None:
     from rocm_mq import executor
 
     fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
-    # Force the fake's merge to return 204 by aligning develop_tip with the PR head.
-    fake.state.develop_tip = "head_sha_aaa"
     _patch_pulls_get_to_return_branch(fake, head_ref="feature-branch")
+    # Force repos.merge to return 204 unconditionally (already up-to-date case).
+    fake.rest.repos.merge = lambda *a, **kw: SimpleNamespace(  # type: ignore[assignment]
+        status_code=204, parsed_data=None
+    )
     config = canonical_merge_queue_config()
     pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
 
@@ -424,20 +448,21 @@ def test_activate__second_call__noop_on_already_active_pr() -> None:
 
     fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
     _patch_pulls_get_to_return_branch(fake, head_ref="feature-branch")
+    _patch_repos_merge_to_advance_pr_head(fake, 42)
     config = canonical_merge_queue_config()
     pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
 
-    # First activate.
+    # First activate (201 path).
     out1 = executor.dispatch(
         Activate(pr=pr), client=fake, config=config, owner="org", repo="repo"
     )
     assert out1.success is True
 
-    # Second activate — the fake's develop now contains the PR (develop_tip
-    # was updated); fake's merge() returns 204; label add is idempotent;
-    # status create overwrites.
-    # Re-align develop_tip so the second merge call returns 204.
-    fake.state.develop_tip = "head_sha_aaa"
+    # Second activate — develop now already contains the PR; force merge to
+    # return 204. Status create overwrites; label add is idempotent.
+    fake.rest.repos.merge = lambda *a, **kw: SimpleNamespace(  # type: ignore[assignment]
+        status_code=204, parsed_data=None
+    )
     out2 = executor.dispatch(
         Activate(pr=pr), client=fake, config=config, owner="org", repo="repo"
     )
@@ -504,15 +529,18 @@ def test_idempotency__status_overwrite__no_error_on_second_post() -> None:
 
     fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
     _patch_pulls_get_to_return_branch(fake, head_ref="feature-branch")
+    _patch_repos_merge_to_advance_pr_head(fake, 42)
     config = canonical_merge_queue_config()
     pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
 
-    # First and second activate; both must succeed and the status_store still
-    # carries exactly one entry per (sha, context) — overwrite semantics.
+    # First activate (201 path advances PR head to a merge SHA).
     out1 = executor.dispatch(
         Activate(pr=pr), client=fake, config=config, owner="org", repo="repo"
     )
-    fake.state.develop_tip = "head_sha_aaa"  # second merge → 204
+    # Second activate (204 path — force merge to no-op).
+    fake.rest.repos.merge = lambda *a, **kw: SimpleNamespace(  # type: ignore[assignment]
+        status_code=204, parsed_data=None
+    )
     out2 = executor.dispatch(
         Activate(pr=pr), client=fake, config=config, owner="org", repo="repo"
     )
@@ -532,6 +560,7 @@ def test_idempotency__add_labels__already_present__no_duplicate() -> None:
     # Pre-seed mq:active so the activate handler's add_labels is a re-add.
     fake.state.prs[42].labels.add("mq:active")
     _patch_pulls_get_to_return_branch(fake, head_ref="feature-branch")
+    _patch_repos_merge_to_advance_pr_head(fake, 42)
     config = canonical_merge_queue_config()
     pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
 
@@ -548,8 +577,11 @@ def test_idempotency__repos_merge_204__treated_as_success() -> None:
     from rocm_mq import executor
 
     fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
-    fake.state.develop_tip = "head_sha_aaa"  # forces 204
     _patch_pulls_get_to_return_branch(fake, head_ref="feature-branch")
+    # Force 204 unconditionally (already up-to-date).
+    fake.rest.repos.merge = lambda *a, **kw: SimpleNamespace(  # type: ignore[assignment]
+        status_code=204, parsed_data=None
+    )
     config = canonical_merge_queue_config()
     pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
 
