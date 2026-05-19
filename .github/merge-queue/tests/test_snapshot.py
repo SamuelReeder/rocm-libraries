@@ -25,6 +25,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+
 from rocm_mq.snapshot import (
     _make_raw_pr_state,
     _make_status_creator,
@@ -36,7 +37,6 @@ from rocm_mq.state import (
     RawPRState,
     RawSnapshot,
 )
-
 from tests.conftest import CANONICAL_APP, canonical_merge_queue_config
 
 # ---------------------------------------------------------------------------
