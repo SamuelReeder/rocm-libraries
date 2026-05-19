@@ -535,6 +535,74 @@ def test_process_cycle__pre_defers_emitted_as_defer_actions(
 
 
 # ---------------------------------------------------------------------------
+# 13. CR-01: _build_default_config must NEVER ship sentinel zeros
+# ---------------------------------------------------------------------------
+
+
+def test_build_default_config__requires_resolved_app_identity() -> None:
+    """_build_default_config must take a non-stub AppIdentity (CR-01).
+
+    Regression guard for the bug where _build_default_config() returned a
+    MergeQueueConfig with AppIdentity(app_id=0, bot_user_id=0). With zero
+    sentinels, every is_app_identity / is_app_identity_actor check in the
+    decision layer rejects legitimate events and no PR ever activates or
+    squashes in production.
+
+    The fixed signature is keyword-only and required, so accidentally
+    calling _build_default_config() with no app_identity is a type error.
+    """
+    from rocm_mq import cmd_process
+    from rocm_mq.state import AppIdentity
+
+    # Real-shape AppIdentity (resolved via resolve_app_identity in main()).
+    resolved = AppIdentity(slug="rocm-mq", app_id=12345, bot_user_id=99999)
+    config = cmd_process._build_default_config(app_identity=resolved)
+    assert config.app_identity.app_id != 0, (
+        "regression: _build_default_config produced a stub AppIdentity (CR-01)"
+    )
+    assert config.app_identity.bot_user_id != 0, (
+        "regression: _build_default_config produced a stub bot_user_id (CR-01)"
+    )
+    assert config.app_identity is resolved
+
+
+def test_main__fake_flag__resolves_app_identity_from_fake() -> None:
+    """main() --fake threads FakeGitHub's apps/users namespaces into config (CR-01).
+
+    The fake's _AppsNS.get_authenticated returns id=12345/slug="rocm-mq" and
+    _UsersNS.get_by_username("rocm-mq[bot]") returns id=99999 — so
+    resolve_app_identity(fake) must populate MergeQueueConfig.app_identity
+    with those values, NOT the previously-hardcoded zeros.
+    """
+    from rocm_mq import cmd_process
+
+    captured: dict[str, Any] = {}
+
+    def spy_process_cycle(**kwargs: Any) -> tuple[Any, ...]:
+        captured["config"] = kwargs["config"]
+        return ()
+
+    fake = FakeGitHub(FakeRepoState())
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(cmd_process, "_build_fake_client", lambda: fake)
+        monkeypatch.setattr(cmd_process, "process_cycle", spy_process_cycle)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["rocm-mq", "process-cycle", "--fake", "--repo", "x/y"],
+        )
+        rc = cmd_process.main()
+    finally:
+        monkeypatch.undo()
+    assert rc == 0
+    cfg = captured["config"]
+    assert cfg.app_identity.app_id == 12345
+    assert cfg.app_identity.bot_user_id == 99999
+    assert cfg.app_identity.slug == "rocm-mq"
+
+
+# ---------------------------------------------------------------------------
 # Module-level smoke: cmd_process imports cleanly (RED phase verifies this fails)
 # ---------------------------------------------------------------------------
 

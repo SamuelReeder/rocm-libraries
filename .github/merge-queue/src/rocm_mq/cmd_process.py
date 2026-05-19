@@ -59,6 +59,7 @@ from rocm_mq.snapshot import build_snapshot
 from rocm_mq.state import (
     Action,
     ActionOutcome,
+    AppIdentity,
     CycleRenderContext,
     MergeQueueConfig,
     PartialPRState,
@@ -334,10 +335,22 @@ def main(argv: list[str] | None = None) -> int:
 
         client = _GitHubClient(token=token)
 
+    # Resolve the App's canonical identity (slug + app_id + bot_user_id) BEFORE
+    # building the config. The decision layer's is_app_identity /
+    # is_app_identity_actor helpers compare numeric ids against the values
+    # carried on MergeQueueConfig.app_identity; sentinel zeros would reject
+    # every legitimate status/timeline event and classify every PR as
+    # Defer ("tampered"), so no PR would ever activate or squash in production
+    # (CR-01). Both --fake (FakeGitHub.rest.apps + .rest.users return the
+    # canonical sentinel) and real-token paths flow through here.
+    from rocm_mq.gh import resolve_app_identity
+
+    app_identity = resolve_app_identity(client)
+
     # Build the config. Phase 2: canonical hardcoded config; Phase 4 will
     # load PATH_TO_QUEUES yaml and validate. For --fake runs this is the
     # same config the tests use (canonical_merge_queue_config).
-    config = _build_default_config()
+    config = _build_default_config(app_identity=app_identity)
 
     # Cycle-scope `now` — the ONLY datetime.now(tz=UTC) call in rocm_mq.
     now = datetime.now(tz=UTC)
@@ -377,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _build_default_config() -> MergeQueueConfig:
+def _build_default_config(*, app_identity: AppIdentity) -> MergeQueueConfig:
     """Default MergeQueueConfig for Phase 2 CLI runs.
 
     Phase 4 (PATH_TO_QUEUES loader) will replace this with a yaml-driven
@@ -387,14 +400,19 @@ def _build_default_config() -> MergeQueueConfig:
     Note: in Phase 2 tests we import ``canonical_merge_queue_config`` from
     ``tests.conftest`` and pass it directly to ``process_cycle`` — this
     factory is only used by the ``main()`` real-token path.
-    """
-    # Import lazily so we never depend on tests/ at import time.
-    from rocm_mq.state import AppIdentity
 
+    Args:
+        app_identity: The App's resolved canonical identity (slug + app_id +
+            bot_user_id), produced by ``resolve_app_identity(client)`` at
+            cycle startup. Sentinel zeros would reject every legitimate
+            status/timeline event in the decision layer (CR-01); the field
+            is keyword-only and required to make accidental zero-stubs a
+            type error rather than a silent production no-op.
+    """
     return MergeQueueConfig(
         all_queues=("hipdnn",),
         path_to_queues=(),
-        app_identity=AppIdentity(slug="rocm-mq", app_id=0, bot_user_id=0),
+        app_identity=app_identity,
     )
 
 
