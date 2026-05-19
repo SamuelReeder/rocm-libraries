@@ -46,15 +46,19 @@ Private helpers (exposed for unit tests):
      - RequestFailed(405) → ``ActionOutcome(success=True, "already merged")``.
   3. ``_verify_squash(...)``; ``CorruptSquashError`` → ``ActionOutcome(success=False)``
      carrying the error message. Pitfall 8 / April 2026 incident defence.
-- ``_verify_squash`` — retries ``repos.get_commit(squash_sha)`` up to 3 times
-  on 404 (read-replication lag, RESEARCH.md UK-4). Asserts
-  ``commit.parents[0].sha == pre_squash_develop_sha`` and raises
-  ``CorruptSquashError`` on mismatch. WR-08: this assertion is conservative
-  — a benign cross-job race that advances develop between the pre-squash
-  ``get_branch`` read and the ``pulls.merge`` call causes a false-positive
-  ejection. The Phase 3 audit job is expected to provide independent
-  squash-provenance verification; until then, the false-positive risk is
-  accepted in exchange for deterministic Pitfall 8 corruption detection.
+- ``_verify_squash`` — composes TWO defences against the Pitfall 8 /
+  April 2026 silent-corruption pattern.
+  * Phase A (parent linkage): retries ``repos.get_commit(squash_sha)`` up to
+    3 times on 404 (read-replication lag, RESEARCH.md UK-4) and asserts
+    ``commit.parents[0].sha == pre_squash_develop_sha``; raises
+    ``CorruptSquashError`` on mismatch.
+  * Phase B (tree-diff sanity, SC#3): calls
+    ``repos.compare_commits(basehead=f"{pre_squash_develop_sha}...{squash_sha}")``
+    and requires both ``status == 'ahead'`` AND a non-empty ``files`` list;
+    ANY other shape (``identical``, ``behind``, ``diverged``, or empty
+    files) raises ``CorruptSquashError``. Catches the literal April-2026
+    corruption shape where parents look correct but the commit content is
+    empty or identical to develop's pre-merge tip.
 - ``_handle_eject`` — overwrites the activation status to ``"failure"`` on
   ``pr.head_sha`` and removes every label starting with ``config.label_prefix``
   via ``_safe_remove_label`` (each 404 is swallowed independently).
@@ -351,31 +355,47 @@ def _verify_squash(
     pre_squash_develop_sha: str,
     squash_sha: str,
 ) -> None:
-    """Read ``squash_sha`` and assert its first parent matches the pre-squash develop tip.
+    """Verify a freshly-created squash commit against the Pitfall 8 silent-corruption pattern.
 
-    Retries on 404 to absorb read-replication lag (RESEARCH.md UK-4): the
-    squash commit was just created by the same call chain, but the SHA may
-    not yet be visible to ``repos.get_commit`` on a different replica. We
-    retry up to 3 times with 1s and 2s backoffs. Any other ``RequestFailed``
-    propagates immediately (not a known transient).
+    Two phases run in sequence; each independently raises ``CorruptSquashError``
+    (a ``RuntimeError`` subclass) on failure. ``_handle_squash`` catches the
+    exception and returns ``ActionOutcome(success=False)``.
 
-    On a mismatch, raises ``CorruptSquashError`` (RuntimeError subclass) with
-    a descriptive message naming the PR number, the squash SHA, the expected
-    parent, and the observed parent — Pitfall 8 / April 2026 incident defence.
+    Phase A — Parent linkage (RFC §4.9 / RESEARCH.md UK-4):
+        Retries ``repos.get_commit(squash_sha)`` up to 3 times on 404
+        (read-replication lag — the squash commit was just created in the
+        same call chain but may not yet be visible on a different replica).
+        Backoffs are 1s then 2s; any other ``RequestFailed`` propagates
+        immediately. Asserts ``commit.parents[0].sha == pre_squash_develop_sha``;
+        a mismatch raises with PR number, expected parent, and observed parent
+        in the message.
 
-    Known limitation — TOCTOU window (WR-08): ``pre_squash_develop_sha`` is
-    captured from ``repos.get_branch("develop")`` BEFORE ``pulls.merge``.
-    Any process (the Phase 3 audit job, a manual merge, an external bot)
-    that advances develop in that window will cause this check to report a
-    false-positive ``CorruptSquashError`` and eject a perfectly valid
-    squash. The processor's own ``concurrency: mq-processor`` block
-    (RFC §4.7) prevents two processor cycles from racing each other, but
-    cross-job concurrency is NOT serialised at the GitHub API. Closing this
-    gap requires either (a) ancestry-walking from the parent SHA up to the
-    current develop tip (one extra ``repos.compare_commits`` call), or
-    (b) extending the Phase 3 audit job to re-verify squash provenance
-    independently. Until either lands, accept the false-positive ejection
-    risk in exchange for catching true Pitfall 8 corruption deterministically.
+    Phase B — Tree-diff sanity (SC#3 / Pitfall 8 silent-corruption defence):
+        Calls ``client.rest.repos.compare_commits(
+        basehead=f"{pre_squash_develop_sha}...{squash_sha}")`` and inspects
+        ``parsed_data.status`` plus ``parsed_data.files``. The pass condition
+        is ``status == 'ahead'`` AND ``len(files) > 0`` — a correct squash
+        MUST advance develop AND MUST change at least one file. Any other
+        shape raises ``CorruptSquashError``:
+          * ``status == 'identical'`` — squash equals pre-merge tip; no
+            changes landed. The canonical April-2026 silent-corruption shape.
+          * ``files == []`` — empty changed-files list; literal Apr-2026
+            silent-corruption shape (status may even appear ``ahead``).
+          * ``status in {'behind', 'diverged'}`` — squash failed to advance
+            develop cleanly; impossible for a correct squash applied on the
+            current tip.
+        Phase B has NO retry budget. Unlike Phase A's get_commit (which races
+        post-write replication lag), compare_commits reads two committed SHAs
+        and is not subject to the same lag. Any failure propagates.
+
+    TOCTOU caveat on ``pre_squash_develop_sha`` (unchanged by Phase B):
+        The expected parent SHA is captured from
+        ``repos.get_branch("develop")`` BEFORE ``pulls.merge``. A cross-job
+        advance of develop in that window will still cause Phase A to report
+        a false-positive ``CorruptSquashError``. The processor's own
+        ``concurrency: mq-processor`` block (RFC §4.7) serialises processor
+        cycles; the Phase 3 audit job (RFC §4.3.1) re-verifies squash
+        provenance independently to defend against the cross-job case.
     """
     last_exc: RequestFailed | None = None
     commit: Any | None = None
@@ -408,6 +428,31 @@ def _verify_squash(
             f"PR #{pr.number} squash {squash_sha!r}: expected parent "
             f"{pre_squash_develop_sha!r}, got {observed_parent!r} "
             "(Pitfall 8 — possible silent corruption in repos.merge_pull)"
+        )
+
+    # ---- Phase B: tree-diff sanity (SC#3 / Pitfall 8 / Apr-2026 incident) ----
+    # Even with correct parent linkage, the squash commit's TREE may be
+    # corrupted: identical to the pre-merge develop tip (no changes landed)
+    # or carrying an empty file list. The Apr-2026 silent-corruption shape
+    # presents exactly this way. compare_commits is the cheapest reliable
+    # detector: a single API call returns both the relational status
+    # ('ahead' | 'behind' | 'identical' | 'diverged') and the changed-files
+    # list. No retry budget — both SHAs are already committed; replication
+    # lag is not the failure mode here.
+    compare_resp = client.rest.repos.compare_commits(
+        owner,
+        repo,
+        basehead=f"{pre_squash_develop_sha}...{squash_sha}",
+    )
+    compare = compare_resp.parsed_data
+    status = str(getattr(compare, "status", "unknown"))
+    files = list(getattr(compare, "files", []) or [])
+    if status != "ahead" or not files:
+        raise CorruptSquashError(
+            f"PR #{pr.number} squash {squash_sha!r}: tree-diff sanity failed "
+            f"— status={status!r}, files_count={len(files)} "
+            "(expected status='ahead' with non-empty files; possible "
+            "Pitfall 8 silent corruption per Apr-2026 incident)"
         )
 
 
