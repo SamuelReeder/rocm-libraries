@@ -27,12 +27,13 @@ jobs:
 
     steps:
       - name: Checkout
-        # Pinned per RFC §8 self-bootstrap protection — promote to SHA pin
-        # in a follow-up that lands the SELF_BOOTSTRAP_PATHS audit job.
-        uses: actions/checkout@v4
+        # SHA-pinned per RFC §8 self-bootstrap protection (CR-05). Tag in the
+        # trailing comment is for human readability only; CI trusts the SHA.
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.2.2
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        # SHA-pinned per RFC §8 self-bootstrap protection (CR-05).
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
           python-version: "3.12"
           cache: pip
