@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from hypothesis import HealthCheck, settings
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, initialize, rule
 
 from rocm_mq.decision import decide_cycle, derive_pr
@@ -64,14 +63,9 @@ class MergeQueueStateMachineBase(RuleBasedStateMachine):
 
     prs = Bundle("prs")
 
-    # Per-class Hypothesis settings — subclasses can override.
-    # CI profile (500 examples) overrides this via conftest.py profile loading.
-    settings = settings(
-        stateful_step_count=30,
-        max_examples=200,
-        suppress_health_check=[HealthCheck.too_slow],
-        deadline=None,
-    )
+    # NOTE: Per-class Hypothesis settings are applied via @settings(...) decorator
+    # on each subclass (not via class attribute). Subclasses define their own
+    # max_examples and stateful_step_count.
 
     # ------------------------------------------------------------------
     # @initialize — sets up all shadow state
@@ -101,8 +95,26 @@ class MergeQueueStateMachineBase(RuleBasedStateMachine):
             q: [] for q in self.config.all_queues
         }
 
-        # Actions from the most recent advance_cycle call
+        # Actions from the most recent advance_cycle call.
+        # Cleared at the START of each advance_cycle (not at the end), so that
+        # invariant checks between non-cycle rules see an empty list (no stale actions).
         self.last_cycle_actions: list[Action] = []
+
+        # Pre-apply snapshot of shadow_queue_order (taken at start of advance_cycle
+        # before _apply_actions_to_shadow modifies the queue order).
+        # Used by head-of-all-queues invariant to compare against the queue order
+        # BEFORE squashes removed PRs from it.
+        self.last_cycle_pre_queue_order: dict[str, list[int]] = {}
+
+        # Track which PR numbers were squashed AND had canonical activation at squash time.
+        # Used by squash_implies_canonical_activation_in_raw invariant (the PR is removed
+        # from shadow_raw_prs during _apply_actions_to_shadow, so we cache the verdict).
+        self.shadow_squash_had_canonical_activation: dict[int, bool] = {}
+
+        # Set of PR numbers that had mq:active BEFORE the most recent advance_cycle call.
+        # Used by no_double_activate invariant (post-apply, shadow_prs is updated, so
+        # this pre-cycle snapshot is needed to distinguish "just activated" from "double-activate").
+        self.last_cycle_pre_active_prs: frozenset[int] = frozenset()
 
         # Monotonically increasing PR number counter
         self.next_pr_number: int = 1
@@ -130,13 +142,33 @@ class MergeQueueStateMachineBase(RuleBasedStateMachine):
         number = self.next_pr_number
         self.next_pr_number += 1
 
-        # Rebuild raw_pr with the assigned number
+        # Compute the minimum valid enqueued_at: the new PR must have enqueued_at
+        # >= the maximum enqueued_at of all PRs currently in any of its queues.
+        # This maintains the FIFO invariant: a new enqueue can never jump to the
+        # front of a queue that already has older PRs waiting.
+        #
+        # We use self.now as a safe floor (the real system applies labels at "now").
+        # This ensures monotonically non-decreasing enqueued_at across enqueue calls.
+        min_valid_at = self.now
+
+        # Normalize App-applied label events to use the clamped timestamp
+        normalized_events = tuple(
+            LabelEvent(
+                label_name=e.label_name,
+                event=e.event,
+                actor=e.actor,
+                created_at=min_valid_at,  # always use self.now as the enqueue time
+            )
+            for e in raw_pr.mq_queued_label_events
+        )
+
+        # Rebuild raw_pr with the assigned number and normalized events
         raw_pr = RawPRState(
             number=number,
             head_sha=raw_pr.head_sha,
             labels=raw_pr.labels,
             head_statuses=raw_pr.head_statuses,
-            mq_queued_label_events=raw_pr.mq_queued_label_events,
+            mq_queued_label_events=normalized_events,
             required_check_results=raw_pr.required_check_results,
             changed_paths=raw_pr.changed_paths,
         )
@@ -295,7 +327,26 @@ class MergeQueueStateMachineBase(RuleBasedStateMachine):
 
         Per-PR invariant preserved: no PR ever gets Activate+Squash in the same cycle.
         """
+        # Clear last_cycle_actions at the START so that between-cycle invariant checks
+        # (fired after enqueue/push_new_commit/simulate_timeline_lag rules) see [].
+        self.last_cycle_actions = []
+
         snapshot = self._build_snapshot_from_shadow()
+
+        # Capture pre-apply snapshots (for invariants that compare against pre-cycle state)
+        self.last_cycle_pre_active_prs = frozenset(
+            pr.number
+            for pr in snapshot.prs
+            if self.config.active_label in pr.labels
+        )
+        # Deep-copy queue order BEFORE apply (for head-of-all-queues invariant)
+        self.last_cycle_pre_queue_order = {
+            q: list(order) for q, order in self.shadow_queue_order.items()
+        }
+
+        # Clear per-cycle squash cache before applying actions
+        self.shadow_squash_had_canonical_activation.clear()
+
         actions = decide_cycle(snapshot, self.config, self.now)
         self._apply_actions_to_shadow(actions)
         self.last_cycle_actions = actions
@@ -357,7 +408,16 @@ class MergeQueueStateMachineBase(RuleBasedStateMachine):
                     if q in self.shadow_activation_history_per_queue:
                         self.shadow_activation_history_per_queue[q].append(action)
 
-            elif isinstance(action, (Squash, Eject)):
+            elif isinstance(action, Squash):
+                pr_num = action.pr.number
+                # Cache canonical activation verdict BEFORE removing the PR from shadow.
+                # The @invariant squash_implies_canonical_activation_in_raw reads this
+                # cache because shadow_raw_prs will be empty after _remove_pr_from_shadow.
+                had_canonical = self._raw_had_canonical_activation(pr_num)
+                self.shadow_squash_had_canonical_activation[pr_num] = had_canonical
+                self._remove_pr_from_shadow(pr_num)
+
+            elif isinstance(action, Eject):
                 pr_num = action.pr.number
                 self._remove_pr_from_shadow(pr_num)
 
@@ -375,11 +435,18 @@ class MergeQueueStateMachineBase(RuleBasedStateMachine):
         Used by the stronger invariant in test_invariant_no_squash_without_app_activation.
         Checks the underlying raw state (not the derived PRState) to verify the
         activation status creator was the canonical App identity.
+
+        For PRs that have already been squashed (and thus removed from shadow_raw_prs),
+        uses the cached verdict stored in shadow_squash_had_canonical_activation
+        by _apply_actions_to_shadow BEFORE the PR was removed.
         """
+        # First check the cache (for PRs removed by Squash action this cycle)
+        if pr_number in self.shadow_squash_had_canonical_activation:
+            return self.shadow_squash_had_canonical_activation[pr_number]
+
         raw = self.shadow_raw_prs.get(pr_number)
         if raw is None:
-            # PR was already removed from shadow — cannot verify; return False
-            # (conservative: treat as "no canonical activation found")
+            # PR was removed by some other means — cannot verify; return False
             return False
         return any(
             s.context == self.config.activation_status_context
