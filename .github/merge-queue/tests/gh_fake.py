@@ -90,7 +90,7 @@ def _make_request_failed(status_code: int) -> RequestFailed:
     sufficient. Matches the pattern used in tests/test_gh_client.py.
     """
     exc = RequestFailed.__new__(RequestFailed)
-    exc.response = SimpleNamespace(status_code=status_code)  # type: ignore[attr-defined]
+    exc.response = SimpleNamespace(status_code=status_code)  # type: ignore[assignment]
     return exc
 
 

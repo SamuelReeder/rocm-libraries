@@ -245,7 +245,7 @@ def _make_raw_pr_state(
 
     # changed_paths: tuple of file names (may be empty when list_files skipped)
     if files and not isinstance(files[0], str):
-        changed = tuple(str(f.filename) for f in files)
+        changed = tuple(str(f.filename) for f in files)  # type: ignore[union-attr]
     else:
         changed = tuple(str(f) for f in files)
 

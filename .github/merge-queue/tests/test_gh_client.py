@@ -23,8 +23,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from githubkit.exception import RequestFailed, SecondaryRateLimitExceeded
-from rocm_mq.gh import CorruptSquashError, GitHubClient, resolve_app_identity
 
+from rocm_mq.gh import CorruptSquashError, GitHubClient, resolve_app_identity
 from rocm_mq.state import AppIdentity
 
 # ---------------------------------------------------------------------------
