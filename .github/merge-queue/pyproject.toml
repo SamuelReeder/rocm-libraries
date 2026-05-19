@@ -13,6 +13,9 @@ dependencies = [
     "PyYAML>=6.0.3",
 ]
 
+[project.scripts]
+rocm-mq = "rocm_mq.cmd_process:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.3",
