@@ -888,6 +888,51 @@ def test_find_status_comment_id__no_marker__returns_none() -> None:
     assert found is None
 
 
+def test_find_status_comment_id__marker_on_later_page__found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Marker on page 2 of a paginated comment list is still discoverable (WR-03).
+
+    The previous single-page implementation could miss the marker comment
+    on busy PRs (>30 comments), causing _handle_update_comment to create a
+    DUPLICATE status comment every cycle. Pin the pagination contract: a
+    full first page (per_page=100) MUST trigger a page=2 fetch, and the
+    marker on page 2 MUST be returned rather than reported as missing.
+    """
+    from rocm_mq import executor
+
+    # First page: 100 unrelated comments (full page → must paginate).
+    page1 = [SimpleNamespace(id=i, body="noise") for i in range(1, 101)]
+    # Second page: the marker comment.
+    page2 = [
+        SimpleNamespace(id=200, body="something else"),
+        SimpleNamespace(id=201, body="Build report\n<!-- rocm-mq-status -->\n..."),
+    ]
+
+    call_log: list[dict[str, Any]] = []
+
+    def list_comments(owner: str, repo: str, pr_number: int, **kwargs: Any) -> SimpleNamespace:
+        call_log.append(dict(kwargs))
+        page = kwargs.get("page", 1)
+        if page == 1:
+            return SimpleNamespace(parsed_data=page1)
+        if page == 2:
+            return SimpleNamespace(parsed_data=page2)
+        return SimpleNamespace(parsed_data=[])
+
+    client = MagicMock()
+    client.rest.issues.list_comments.side_effect = list_comments
+
+    found = executor._find_status_comment_id(client, "org", "repo", 42)
+    assert found == 201, (
+        "regression: pagination missed the marker on page 2 (WR-03)"
+    )
+    # Must have requested at least page=1 with per_page=100, then page=2.
+    pages_requested = [c.get("page") for c in call_log]
+    assert pages_requested[0] == 1
+    assert 2 in pages_requested
+
+
 # ---------------------------------------------------------------------------
 # UpdateComment end-to-end (create vs update path)
 # ---------------------------------------------------------------------------

@@ -262,8 +262,17 @@ class _IssuesNS:
         return _resp(events)
 
     def list_comments(
-        self, owner: str, repo: str, issue_number: int
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        **_: Any,
     ) -> SimpleNamespace:
+        # The fake does not model comment storage; tests that need to drive
+        # specific comment lists monkeypatch this method. Accepts arbitrary
+        # kwargs (per_page, page) so the executor's paginated _find_status_
+        # comment_id implementation (WR-03) drives through here without a
+        # signature mismatch.
         return _resp([])
 
     def create_comment(

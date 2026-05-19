@@ -57,9 +57,11 @@ Private helpers (exposed for unit tests):
   ``_find_status_comment_id`` (scanning for the ``_STATUS_MARKER`` literal); if
   found, updates; otherwise creates. The marker MUST match
   ``rocm_mq.comment._STATUS_MARKER`` exactly (T-02-03-06).
-- ``_find_status_comment_id`` — single-page ``issues.list_comments`` scan for
-  the ``<!-- rocm-mq-status -->`` marker; returns the first matching id or
-  ``None``. Pagination is a known limitation (see Phase 3 follow-up).
+- ``_find_status_comment_id`` — paginated ``issues.list_comments`` scan
+  (per_page=100, bounded at ``_LIST_COMMENTS_MAX_PAGES`` to cap pathological
+  PRs) for the ``<!-- rocm-mq-status -->`` marker; returns the first matching
+  id or ``None`` (WR-03). The previous single-page implementation could miss
+  the marker on busy PRs and create a duplicate status comment every cycle.
 - ``_safe_remove_label`` — wraps ``issues.remove_label`` and swallows
   RequestFailed(404) (label already absent; idempotent no-op per RFC §4.6).
 
@@ -471,6 +473,10 @@ def _handle_update_comment(
     return ActionOutcome(action=action, success=True, error_message=None)
 
 
+_LIST_COMMENTS_PER_PAGE = 100
+_LIST_COMMENTS_MAX_PAGES = 50  # safety bound: 5000 comments
+
+
 def _find_status_comment_id(
     client: GitHubClient,
     owner: str,
@@ -479,16 +485,40 @@ def _find_status_comment_id(
 ) -> int | None:
     """Scan PR issue comments for ``_STATUS_MARKER`` and return the first id.
 
-    Single-page implementation (Phase 3 will paginate if multiple status
-    comments per PR ever appear in practice). Returns ``None`` if no comment
-    contains the marker.
+    Paginates ``issues.list_comments`` using page-based iteration with
+    ``per_page=100`` (the GitHub API maximum). The previous single-page
+    implementation could miss the marker comment on busy PRs (>30
+    comments), in which case ``_handle_update_comment`` would create a
+    DUPLICATE status comment every cycle — at 3-minute cron cadence that
+    is 480 duplicates per active PR per day (WR-03).
+
+    Returns the FIRST matching id encountered while paginating (oldest
+    first, since GitHub returns comments in chronological order). If the
+    marker is never seen, returns ``None`` and the caller creates a fresh
+    comment.
+
+    A ``_LIST_COMMENTS_MAX_PAGES`` safety bound caps the loop so a
+    pathological PR with thousands of comments still terminates cleanly.
     """
-    resp = client.rest.issues.list_comments(owner, repo, pr_number)
-    comments = resp.parsed_data or []
-    for comment in comments:
-        body = str(getattr(comment, "body", "") or "")
-        if _STATUS_MARKER in body:
-            return int(comment.id)
+    for page in range(1, _LIST_COMMENTS_MAX_PAGES + 1):
+        resp = client.rest.issues.list_comments(
+            owner,
+            repo,
+            pr_number,
+            per_page=_LIST_COMMENTS_PER_PAGE,
+            page=page,
+        )
+        comments = list(resp.parsed_data or [])
+        for comment in comments:
+            body = str(getattr(comment, "body", "") or "")
+            if _STATUS_MARKER in body:
+                return int(comment.id)
+        # Short page (or empty page) → no more comments to fetch.
+        if len(comments) < _LIST_COMMENTS_PER_PAGE:
+            return None
+    # Hit the safety bound without finding the marker — treat as not-found
+    # (the caller will create a new comment; on the next cycle this scan
+    # will find that fresh comment within the safety bound).
     return None
 
 
