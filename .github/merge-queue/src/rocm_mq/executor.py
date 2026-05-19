@@ -88,7 +88,8 @@ Constants:
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any, assert_never
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeVar, assert_never
 
 # PURE-09 positive marker: I/O modules MUST import githubkit at module level so
 # the lint (test_io_modules_do_import_githubkit) passes.
@@ -384,9 +385,19 @@ def _verify_squash(
           * ``status in {'behind', 'diverged'}`` — squash failed to advance
             develop cleanly; impossible for a correct squash applied on the
             current tip.
-        Phase B has NO retry budget. Unlike Phase A's get_commit (which races
-        post-write replication lag), compare_commits reads two committed SHAs
-        and is not subject to the same lag. Any failure propagates.
+        Phase B uses the SAME retry budget as Phase A. The original Phase B
+        implementation argued ``compare_commits`` was immune to replication
+        lag because both SHAs are already committed, but that reasoning only
+        addressed *content* lag. The same read-replication *visibility* lag
+        that motivates Phase A's retry applies to ``compare_commits``: the
+        API resolves the ``basehead`` URL fragment by looking up both SHAs,
+        and if the replica handling the compare has not yet seen
+        ``squash_sha``, the call raises ``RequestFailed(404)``. Phase A's
+        retry may complete on attempt 2 or 3 against replica A while Phase
+        B's first call hits replica B for the first time. Without a retry
+        budget, a correct squash would eject the cycle because one replica
+        is half a second behind — exactly the false-positive ejection the
+        UK-4 retry was added to prevent (WR-01).
 
     TOCTOU caveat on ``pre_squash_develop_sha`` (unchanged by Phase B):
         The expected parent SHA is captured from
@@ -397,25 +408,9 @@ def _verify_squash(
         cycles; the Phase 3 audit job (RFC §4.3.1) re-verifies squash
         provenance independently to defend against the cross-job case.
     """
-    last_exc: RequestFailed | None = None
-    commit: Any | None = None
-    for attempt in range(_VERIFY_SQUASH_RETRIES):
-        try:
-            resp = client.rest.repos.get_commit(owner, repo, squash_sha)
-            commit = resp.parsed_data
-            break
-        except RequestFailed as exc:
-            if _status_code(exc) != 404:
-                raise
-            last_exc = exc
-            if attempt == _VERIFY_SQUASH_RETRIES - 1:
-                # Out of retries — propagate the last 404.
-                raise
-            time.sleep(_VERIFY_SQUASH_BACKOFFS[attempt])
-    else:  # pragma: no cover  (defensive — the loop always breaks or raises)
-        raise last_exc  # type: ignore[misc]
-
-    assert commit is not None  # narrowed for mypy/type checkers
+    commit = _retry_on_404(
+        lambda: client.rest.repos.get_commit(owner, repo, squash_sha).parsed_data
+    )
     parents = list(commit.parents or [])
     if not parents:
         raise CorruptSquashError(
@@ -437,14 +432,16 @@ def _verify_squash(
     # presents exactly this way. compare_commits is the cheapest reliable
     # detector: a single API call returns both the relational status
     # ('ahead' | 'behind' | 'identical' | 'diverged') and the changed-files
-    # list. No retry budget — both SHAs are already committed; replication
-    # lag is not the failure mode here.
-    compare_resp = client.rest.repos.compare_commits(
-        owner,
-        repo,
-        basehead=f"{pre_squash_develop_sha}...{squash_sha}",
+    # list. Uses the SAME 3x retry budget as Phase A — compare_commits
+    # resolves the basehead URL by looking up both SHAs, so the same
+    # replication visibility lag class can produce a 404 here even when
+    # Phase A's retry already drained against a different replica (WR-01).
+    basehead = f"{pre_squash_develop_sha}...{squash_sha}"
+    compare = _retry_on_404(
+        lambda: client.rest.repos.compare_commits(
+            owner, repo, basehead=basehead
+        ).parsed_data
     )
-    compare = compare_resp.parsed_data
     status = str(getattr(compare, "status", "unknown"))
     files = list(getattr(compare, "files", []) or [])
     if status != "ahead" or not files:
@@ -589,6 +586,40 @@ def _find_status_comment_id(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+_T = TypeVar("_T")
+
+
+def _retry_on_404(call: Callable[[], _T]) -> _T:
+    """Invoke ``call`` with up to ``_VERIFY_SQUASH_RETRIES`` attempts on 404.
+
+    The 404 is the read-replication visibility lag described in RESEARCH.md
+    UK-4 — a just-committed SHA may be invisible to the replica handling the
+    follow-up read for ~0.5-2s. We back off ``_VERIFY_SQUASH_BACKOFFS`` and
+    retry; any non-404 ``RequestFailed`` propagates immediately. After the
+    final attempt the last 404 propagates (caller cycle aborts; next 3-min
+    cron tick re-runs from a fresh snapshot per RFC §4.6).
+
+    Used by both Phase A (``get_commit``) and Phase B (``compare_commits``)
+    of ``_verify_squash``; the two share a budget because they race the same
+    lag class — see WR-01 in the 02-05 review.
+    """
+    for attempt in range(_VERIFY_SQUASH_RETRIES):
+        try:
+            return call()
+        except RequestFailed as exc:
+            if _status_code(exc) != 404:
+                raise
+            if attempt == _VERIFY_SQUASH_RETRIES - 1:
+                raise
+            time.sleep(_VERIFY_SQUASH_BACKOFFS[attempt])
+    # Defensive — the loop above either returns or raises. mypy needs this
+    # to satisfy the function return type because it cannot prove the loop
+    # exhausts via raise.
+    raise AssertionError(  # pragma: no cover
+        "unreachable: _retry_on_404 loop exited without return/raise"
+    )
 
 
 def _status_code(exc: RequestFailed) -> int | None:

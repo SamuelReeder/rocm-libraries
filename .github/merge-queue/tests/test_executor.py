@@ -967,6 +967,83 @@ def test_verify_squash__tree_diff_status_diverged__raises_corrupt_squash_error()
     assert str(pr.number) in msg
 
 
+def test_verify_squash__compare_commits_404_retries_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase B replication-lag retry (WR-01): first compare_commits 404, second OK.
+
+    Same UK-4 read-replication visibility lag that motivates Phase A's retry
+    on ``get_commit`` also affects ``compare_commits`` — the API resolves the
+    ``basehead`` URL by looking up both SHAs, and a replica that has not yet
+    seen ``squash_sha`` raises 404. Phase B MUST share Phase A's retry budget
+    so a half-second-behind replica does not eject an otherwise-correct
+    squash. Pin the behaviour: a single 404 followed by a happy-path response
+    is absorbed silently (no CorruptSquashError, no RequestFailed).
+    """
+    from rocm_mq import executor
+
+    monkeypatch.setattr("rocm_mq.executor.time.sleep", lambda _: None)
+
+    fake, pr = _seed_phase_a_passing_fake()
+
+    attempts = {"n": 0}
+    real_compare = fake.rest.repos.compare_commits
+
+    def flaky_compare(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise _make_request_failed(404)
+        return real_compare(*args, **kwargs)
+
+    fake.rest.repos.compare_commits = flaky_compare  # type: ignore[assignment]
+
+    # Should succeed on the second attempt (no raise).
+    executor._verify_squash(
+        client=fake,
+        owner="org",
+        repo="repo",
+        pr=pr,
+        pre_squash_develop_sha="develop_tip_xyz",
+        squash_sha="squash_sha_phaseB",
+    )
+    assert attempts["n"] == 2
+
+
+def test_verify_squash__compare_commits_404_three_times__raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase B replication-lag exhaustion: all 3 attempts 404 → propagate (WR-01).
+
+    Mirrors ``test_verify_squash__get_commit_404_three_times__raises`` for
+    Phase B. Confirms the retry budget is finite and the underlying 404
+    surfaces as a ``RequestFailed`` rather than being swallowed silently.
+    """
+    from rocm_mq import executor
+
+    monkeypatch.setattr("rocm_mq.executor.time.sleep", lambda _: None)
+
+    fake, pr = _seed_phase_a_passing_fake()
+
+    attempts = {"n": 0}
+
+    def always_404(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        attempts["n"] += 1
+        raise _make_request_failed(404)
+
+    fake.rest.repos.compare_commits = always_404  # type: ignore[assignment]
+
+    with pytest.raises(RequestFailed):
+        executor._verify_squash(
+            client=fake,
+            owner="org",
+            repo="repo",
+            pr=pr,
+            pre_squash_develop_sha="develop_tip_xyz",
+            squash_sha="squash_sha_phaseB",
+        )
+    assert attempts["n"] == 3
+
+
 def test_handle_squash__verify_failure__returns_failure_outcome(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
