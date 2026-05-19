@@ -1,6 +1,6 @@
-# Hypothesis database — ignore the directory but keep the examples database
-.hypothesis/
-!.hypothesis/examples/
+# Hypothesis database — track the examples dir (counterexample replay) but not the rest
+.hypothesis/unicode_data/
+.hypothesis/*.json
 
 # Python build artifacts
 __pycache__/
