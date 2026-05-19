@@ -442,6 +442,66 @@ def test_activate__pre_stamp_race__author_pushed_between_merge_and_stamp() -> No
     assert not fake.state.status_store
 
 
+def test_activate__pre_stamp_race__204_path__author_pushed_between_reads() -> None:
+    """204 path: race check must trip when head advances between the two reads (CR-02).
+
+    On the 204 ("already up-to-date") path the handler calls pulls.get twice:
+    once to capture the post-merge head SHA (used as the SHA to stamp), and
+    again immediately before stamping for the pre-stamp race check. The
+    previous implementation skipped the race check on 204 entirely; an author
+    push landing between those two reads silently stamped activation on a
+    stale SHA. This test pins the regression — third call (race check) sees
+    a different head than the second call (new_sha source).
+    """
+    from rocm_mq import executor
+
+    fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
+    config = canonical_merge_queue_config()
+
+    # Force repos.merge to return 204 unconditionally (already up-to-date case).
+    fake.rest.repos.merge = lambda *a, **kw: SimpleNamespace(  # type: ignore[assignment]
+        status_code=204, parsed_data=None
+    )
+
+    # Counter-based pulls.get stub:
+    #   call 1 (line 176, pre-merge — used for head.ref) → original SHA
+    #   call 2 (line 200, post-merge — sets new_sha)     → original SHA
+    #   call 3 (line 209, race check — sets current_head) → DIFFERENT SHA
+    pulls_get_calls = {"n": 0}
+
+    def racing_pulls_get(owner: str, repo: str, pull_number: int) -> SimpleNamespace:
+        pulls_get_calls["n"] += 1
+        # Third call simulates the author push that landed between the
+        # post-merge read and the stamp.
+        sha = "head_sha_aaa" if pulls_get_calls["n"] < 3 else "race_new_sha"
+        return SimpleNamespace(
+            parsed_data=SimpleNamespace(
+                head=SimpleNamespace(sha=sha, ref="feature-branch"),
+                base=SimpleNamespace(ref="develop", sha="develop_initial_tip"),
+            )
+        )
+
+    fake.rest.pulls.get = racing_pulls_get  # type: ignore[assignment]
+    pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
+
+    outcome = executor.dispatch(
+        Activate(pr=pr),
+        client=fake,
+        config=config,
+        owner="org",
+        repo="repo",
+    )
+
+    assert outcome.success is False
+    assert outcome.error_message is not None
+    assert (
+        "race" in outcome.error_message.lower()
+        or "advanced" in outcome.error_message.lower()
+    )
+    # Crucially: NO status stamped — the race check fired BEFORE the stamp.
+    assert not fake.state.status_store
+
+
 def test_activate__second_call__noop_on_already_active_pr() -> None:
     """Second activate on an already-active PR completes without error (UK-3)."""
     from rocm_mq import executor

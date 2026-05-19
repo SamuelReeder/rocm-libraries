@@ -24,9 +24,11 @@ Private helpers (exposed for unit tests):
      - RequestFailed(409) → return ``ActionOutcome(success=False)`` with reason
        ``"merge conflict with develop"``; no stamp, no label flip.
   2. Pre-stamp race check — re-read ``pulls.get`` and compare ``head.sha`` to
-     the SHA we are about to stamp. If the author has pushed between the merge
-     and the stamp, abort with ``ActionOutcome(success=False)`` so a stale SHA
-     never receives the activation status. T-02-03-02 mitigation.
+     the SHA we are about to stamp. Runs unconditionally on both 201 and 204
+     paths (CR-02); skipping it on 204 left the post-merge → stamp window
+     unguarded. If the author has pushed between the merge and the stamp,
+     abort with ``ActionOutcome(success=False)`` so a stale SHA never receives
+     the activation status. T-02-03-02 mitigation.
   3. Stamp — ``repos.create_commit_status(state="success",
      context=config.activation_status_context)`` on the merged SHA.
   4. Label flip — ``issues.add_labels([config.active_label])`` then
@@ -197,24 +199,33 @@ def _handle_activate(
     if getattr(merge_resp, "status_code", None) == 204 or merge_resp.parsed_data is None:
         # 204: develop already contained in the PR branch; nothing was created.
         # Fall back to the PR's CURRENT head SHA (already-up-to-date case).
+        # NOTE: this read happens BEFORE the pre-stamp race check below; the
+        # race-check re-read below catches any author push that lands between
+        # this read and the stamp (CR-02). The previous implementation skipped
+        # the race check on the 204 path entirely, leaving an equally-wide
+        # window unguarded.
         pr_obj_post = _read_pr(client, owner, repo, pr.number)
         new_sha = str(pr_obj_post.head.sha)
     else:
         new_sha = str(merge_resp.parsed_data.sha)
 
-    # Step 2: pre-stamp race check. Re-read the PR head SHA and compare. The
-    # 204 path already re-read (and there is no race window between the
-    # re-read and the stamp), but the 201 path MUST re-read here to catch a
-    # push that landed between the merge and our stamp call.
+    # Step 2: pre-stamp race check — always run, on both 201 and 204 paths
+    # (CR-02). The race window between determining `new_sha` and calling
+    # create_commit_status is identical regardless of merge response: two
+    # separate API round-trips. Skipping the check on 204 left author-push
+    # races silently misattributing activation to a stale SHA.
+    #
+    # For 201, `new_sha` is the synthesized merge commit; the post-merge
+    # pulls.get re-read should reflect that same SHA as the PR head. A
+    # mismatch means the author pushed on top, advancing the head past the
+    # merge commit.
+    #
+    # For 204, `new_sha` is the head as of the post-merge read; this second
+    # read catches any push that landed in the (small but real) window
+    # between the two pulls.get calls.
     pr_obj_check = _read_pr(client, owner, repo, pr.number)
     current_head = str(pr_obj_check.head.sha)
-    # In the 201 case, current_head should equal new_sha ONLY if the author
-    # pushed-on-top in a way that produced the same SHA — vanishingly unlikely.
-    # In practice: 201 → new_sha is a merge commit on the PR branch, so
-    # current_head SHOULD equal new_sha. Mismatch = author pushed.
-    # In the 204 case, we already used current_head as new_sha so this is a
-    # tautology.
-    if getattr(merge_resp, "status_code", None) != 204 and current_head != new_sha:
+    if current_head != new_sha:
         return ActionOutcome(
             action=action,
             success=False,
