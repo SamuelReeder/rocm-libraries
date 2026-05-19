@@ -24,16 +24,19 @@ Plus a bonus "creator identity distinction" pair that verifies the
 SimpleUser bridging in ``snapshot._make_status_creator`` accepts the App's
 own statuses and rejects sibling-workflow ones (RFC §4.3.1).
 
-Real-API path: the parametrize list is hard-coded to ``["fake"]``; the
-"real" path is reserved for an opt-in nightly CI job that sets
-``GITHUB_TOKEN`` and exercises the same assertions against a live
-sandbox repo. Adding the real path is a one-line change here and a
-``GITHUB_TOKEN`` environment-scoped secret in the workflow.
+Backend: only the in-memory ``FakeGitHub`` is exercised here. A previous
+revision of this file declared a parametrized ``"real"`` backend that was
+unreachable (the params list was hard-coded to ``["fake"]``) and gated
+behind a nonexistent nightly CI job. Documenting a "real" path that
+never runs is worse than not documenting it — it gives a false sense of
+fake-vs-real drift coverage. Removed entirely (WR-06). To add real-API
+coverage in the future, introduce a separate test module gated on
+``PYTEST_RUN_REAL_GITHUB=1`` and a scheduled CI workflow that mints the
+token via ``actions/create-github-app-token`` against a sandbox repo.
 """
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -50,42 +53,30 @@ REPO = "rocm-libraries"
 
 
 # ---------------------------------------------------------------------------
-# Parametrized fixture: "fake" always; "real" skipped without GITHUB_TOKEN.
+# Fake-backend fixture (WR-06: dormant "real" branch removed).
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(params=["fake"])
-def github_client_and_state(
-    request: pytest.FixtureRequest,
-) -> Iterator[tuple[Any, FakeRepoState]]:
-    """Yield ``(client, state)`` for the parametrized backend."""
-    if request.param == "fake":
-        state = FakeRepoState(
-            prs={
-                1: FakePR(
-                    number=1,
-                    head_sha="head_sha_1",
-                    labels={"mq:queued", "mq:hipdnn"},
-                    files=["projects/hipdnn/foo.cpp"],
-                ),
-                2: FakePR(
-                    number=2,
-                    head_sha="head_sha_2",
-                    labels={"mq:queued"},
-                ),
-            },
-            develop_tip="develop_initial_tip",
-        )
-        yield FakeGitHub(state, creator_type="app"), state
-        return
-    if request.param == "real":  # pragma: no cover - reserved for nightly CI
-        if not os.environ.get("GITHUB_TOKEN"):
-            pytest.skip("real client requires GITHUB_TOKEN env var")
-        # When enabled: construct a real GitHubClient against a sandbox repo,
-        # yield it together with a state-shape object that mirrors what the
-        # tests need. Left unimplemented until the nightly job exists.
-        pytest.skip("real backend not yet wired (nightly CI path)")
-    raise ValueError(f"unknown backend: {request.param!r}")
+@pytest.fixture
+def github_client_and_state() -> Iterator[tuple[Any, FakeRepoState]]:
+    """Yield ``(client, state)`` for the in-memory fake backend."""
+    state = FakeRepoState(
+        prs={
+            1: FakePR(
+                number=1,
+                head_sha="head_sha_1",
+                labels={"mq:queued", "mq:hipdnn"},
+                files=["projects/hipdnn/foo.cpp"],
+            ),
+            2: FakePR(
+                number=2,
+                head_sha="head_sha_2",
+                labels={"mq:queued"},
+            ),
+        },
+        develop_tip="develop_initial_tip",
+    )
+    yield FakeGitHub(state, creator_type="app"), state
 
 
 # ---------------------------------------------------------------------------
