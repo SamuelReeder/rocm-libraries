@@ -238,28 +238,93 @@ class _ReposNS:
         a squash whose first parent matches develop's tip but whose tree is
         empty or identical to the pre-merge tip.
 
-        Default response shape is the happy path — ``status='ahead'`` plus a
-        single-file modification — so existing tests that exercise
-        ``_verify_squash`` continue to pass once Phase B lands. Tests that
-        need corruption shapes (``status='identical'``, ``status='diverged'``,
-        ``status='behind'``, or ``files=[]``) monkeypatch this method
-        directly per the gh_fake.py convention (see the ``flaky_get_commit``
-        pattern in tests/test_executor.py).
+        Input handling (WR-02): the fake now parses ``basehead`` and infers a
+        verdict from the seeded ``state.commits`` ancestry, rather than
+        returning a happy-path response unconditionally. This catches a class
+        of executor-side regressions the original input-agnostic stub could
+        not (wrong-direction ``basehead`` swap, malformed separator, missing
+        SHAs in the seeded state).
+
+        Verdict rules:
+          * ``basehead`` MUST be of the form ``"<base_sha>...<head_sha>"``
+            (triple-dot separator, both halves non-empty); any other shape
+            raises ``RequestFailed(422)`` — same as the real API.
+          * If ``base_sha == head_sha`` → ``status='identical'``, ``files=[]``.
+          * If ``base_sha`` is reachable from ``head_sha`` by walking
+            ``state.commits[*]['parents']`` chains → ``status='ahead'`` with
+            a one-file change list (the happy path).
+          * If ``head_sha`` is reachable from ``base_sha`` (the wrong-direction
+            swap a future refactor might introduce) → ``status='behind'``,
+            ``files=[]``.
+          * No ancestry relationship in the seeded commits → ``status='diverged'``,
+            ``files=[]``.
+
+        Tests that need a corruption shape that the seeded ancestry does NOT
+        naturally produce (e.g. ``status='ahead'`` with ``files=[]``)
+        monkeypatch this method directly per the established pattern.
 
         Accepts both the ``basehead=`` kwarg form (matches the API URL shape
-        ``GET /repos/{owner}/{repo}/compare/{base}...{head}``) and any extra
-        positional/keyword arguments so the executor can use either call
-        shape (``compare_commits(owner, repo, basehead=...)`` or
-        ``compare_commits(owner, repo, base, head)``) without forcing a
-        fake-side rework.
+        ``GET /repos/{owner}/{repo}/compare/{base}...{head}``) and the
+        positional ``(base, head)`` shape so the executor can use either
+        call form. When neither yields a non-empty basehead, raises 422 to
+        mirror the real API's behaviour on malformed input.
         """
-        del args, basehead, kwargs  # surface-only; default fake is shape-agnostic
-        return _resp(
-            SimpleNamespace(
-                status="ahead",
-                files=[SimpleNamespace(filename="dummy.txt", status="modified")],
+        del kwargs  # accepted for forward-compat with extra githubkit kwargs
+        # Allow positional (base, head) form: compare_commits(owner, repo, base, head).
+        if basehead is None and len(args) >= 2:
+            basehead = f"{args[0]}...{args[1]}"
+        if not basehead or "..." not in basehead:
+            raise _make_request_failed(422)
+        base_sha, sep, head_sha = basehead.partition("...")
+        if not sep or not base_sha or not head_sha:
+            raise _make_request_failed(422)
+
+        if base_sha == head_sha:
+            return _resp(SimpleNamespace(status="identical", files=[]))
+        if self._is_ancestor(base_sha, head_sha):
+            return _resp(
+                SimpleNamespace(
+                    status="ahead",
+                    files=[SimpleNamespace(filename="dummy.txt", status="modified")],
+                )
             )
-        )
+        if self._is_ancestor(head_sha, base_sha):
+            return _resp(SimpleNamespace(status="behind", files=[]))
+        return _resp(SimpleNamespace(status="diverged", files=[]))
+
+    def _is_ancestor(self, candidate_ancestor: str, descendant: str) -> bool:
+        """Return True if ``candidate_ancestor`` is reachable by walking
+        ``descendant``'s parent chain in ``state.commits``.
+
+        Walks at most ``len(state.commits)`` steps to guarantee termination
+        even if a (test-author-error) cycle is seeded. SHAs not present in
+        ``state.commits`` are treated as terminal — the walk stops there
+        without raising, so tests that seed only the squash commit (the
+        common case) still get a meaningful verdict against the pre-squash
+        develop tip even when that tip is not itself a key in
+        ``state.commits``.
+        """
+        if candidate_ancestor == descendant:
+            return True
+        seen: set[str] = set()
+        frontier = [descendant]
+        # Bound the walk; commits dict is small in tests.
+        for _ in range(len(self._state.commits) + 1):
+            if not frontier:
+                return False
+            current = frontier.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            meta = self._state.commits.get(current)
+            if meta is None:
+                continue
+            for parent_sha in meta.get("parents", []):
+                if parent_sha == candidate_ancestor:
+                    return True
+                if parent_sha not in seen:
+                    frontier.append(parent_sha)
+        return False
 
 
 class _IssuesNS:

@@ -207,6 +207,100 @@ def test_repos_merge__new_commit__returns_201_with_sha(
 
 
 # ---------------------------------------------------------------------------
+# Semantic 5: compare_commits direction-of-comparison (WR-02)
+# ---------------------------------------------------------------------------
+# The fake's compare_commits MUST be input-aware: it parses ``basehead``,
+# walks the seeded commits graph, and returns a verdict that reflects the
+# actual ancestry relationship between the two SHAs. An input-agnostic stub
+# would mask three classes of executor-side regression:
+#   1. A future _verify_squash refactor that swaps direction to
+#      f"{squash}...{develop}" (would change meaning to "is develop ahead
+#      of squash"; real API returns 'behind'; the fake MUST too).
+#   2. A typo passing one-dot or empty separator (real API returns 422).
+#   3. A regression that calls compare with unrelated SHAs (real API
+#      returns 'diverged').
+
+
+def test_compare_commits__ahead_when_base_is_ancestor_of_head(
+    github_client_and_state: tuple[Any, FakeRepoState],
+) -> None:
+    """basehead='base...head' where base is reachable by walking head's parents
+    → status='ahead' with a non-empty files list (the happy path)."""
+    client, state = github_client_and_state
+    state.commits["head_sha_X"] = {"parents": ["base_sha_Y"], "message": "X"}
+    resp = client.rest.repos.compare_commits(
+        OWNER, REPO, basehead="base_sha_Y...head_sha_X"
+    )
+    assert resp.parsed_data.status == "ahead"
+    assert len(resp.parsed_data.files) >= 1
+
+
+def test_compare_commits__behind_when_direction_is_swapped(
+    github_client_and_state: tuple[Any, FakeRepoState],
+) -> None:
+    """basehead='head...base' (wrong direction) → status='behind', files=[].
+
+    Pins the bug the input-agnostic stub could not catch: a future refactor
+    that swaps the basehead direction would change the semantic from
+    "did the squash advance develop" to "is develop ahead of squash". The
+    real API answers 'behind' to the swapped form; the fake MUST too so
+    that direction-swap regressions fail at test time.
+    """
+    client, state = github_client_and_state
+    state.commits["head_sha_X"] = {"parents": ["base_sha_Y"], "message": "X"}
+    resp = client.rest.repos.compare_commits(
+        OWNER, REPO, basehead="head_sha_X...base_sha_Y"
+    )
+    assert resp.parsed_data.status == "behind"
+    assert resp.parsed_data.files == []
+
+
+def test_compare_commits__identical_when_base_equals_head(
+    github_client_and_state: tuple[Any, FakeRepoState],
+) -> None:
+    """basehead='X...X' → status='identical', files=[]. Pitfall 8 shape."""
+    client, _state = github_client_and_state
+    resp = client.rest.repos.compare_commits(
+        OWNER, REPO, basehead="same_sha...same_sha"
+    )
+    assert resp.parsed_data.status == "identical"
+    assert resp.parsed_data.files == []
+
+
+def test_compare_commits__diverged_when_no_ancestry(
+    github_client_and_state: tuple[Any, FakeRepoState],
+) -> None:
+    """basehead with two unrelated SHAs → status='diverged', files=[]."""
+    client, _state = github_client_and_state
+    # No commits seeded for either SHA → no ancestry relationship.
+    resp = client.rest.repos.compare_commits(
+        OWNER, REPO, basehead="lone_sha_A...lone_sha_B"
+    )
+    assert resp.parsed_data.status == "diverged"
+    assert resp.parsed_data.files == []
+
+
+def test_compare_commits__malformed_basehead__raises_422(
+    github_client_and_state: tuple[Any, FakeRepoState],
+) -> None:
+    """basehead without '...' separator → RequestFailed(422), mirroring real API."""
+    client, _state = github_client_and_state
+    with pytest.raises(RequestFailed) as exc_info:
+        client.rest.repos.compare_commits(OWNER, REPO, basehead="bad_basehead")
+    assert exc_info.value.response.status_code == 422
+
+
+def test_compare_commits__empty_basehead_half__raises_422(
+    github_client_and_state: tuple[Any, FakeRepoState],
+) -> None:
+    """basehead with empty base or head half → RequestFailed(422)."""
+    client, _state = github_client_and_state
+    with pytest.raises(RequestFailed) as exc_info:
+        client.rest.repos.compare_commits(OWNER, REPO, basehead="...just_head")
+    assert exc_info.value.response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # Bonus: creator identity bridging — App vs sibling workflow
 # (T-02-02-01 / T-02-02-05 mitigation verification)
 # ---------------------------------------------------------------------------
