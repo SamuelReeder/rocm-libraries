@@ -442,6 +442,50 @@ def test_activate__pre_stamp_race__author_pushed_between_merge_and_stamp() -> No
     assert not fake.state.status_store
 
 
+def test_activate__label_add_failure__no_status_stamped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """add_labels raising must NOT leave the activation status stamped (CR-03).
+
+    Regression guard for the split-brain bug: with the previous stamp-then-flip
+    order, a label-flip failure left the App's success status posted on the
+    merged SHA while the labels still said queued. The decision layer's
+    is_validly_active check binds activation to that status (RFC §4.9), so the
+    next cycle could schedule a Squash while humans saw mq:queued unchanged.
+
+    Fix: the handler now flips labels FIRST and stamps LAST, so any
+    add_labels failure aborts before any status is posted. The next cycle
+    re-runs Activate (merge is 204 no-op; add_labels is idempotent).
+    """
+    from rocm_mq import executor
+
+    fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
+    _patch_pulls_get_to_return_branch(fake, head_ref="feature-branch")
+    _patch_repos_merge_to_advance_pr_head(fake, 42)
+    config = canonical_merge_queue_config()
+    pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
+
+    def boom_add_labels(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        raise RuntimeError("simulated network blip during add_labels")
+
+    monkeypatch.setattr(fake.rest.issues, "add_labels", boom_add_labels)
+
+    with pytest.raises(RuntimeError, match="simulated network blip"):
+        executor.dispatch(
+            Activate(pr=pr),
+            client=fake,
+            config=config,
+            owner="org",
+            repo="repo",
+        )
+
+    # The critical assertion: no activation status was posted on ANY sha.
+    # The previous order (stamp → flip) would have already populated
+    # status_store with the merged SHA + activation context BEFORE the
+    # add_labels failure propagated.
+    assert not fake.state.status_store, (
+        "regression: activation status was stamped despite add_labels failure (CR-03)"
+    )
+
+
 def test_activate__pre_stamp_race__204_path__author_pushed_between_reads() -> None:
     """204 path: race check must trip when head advances between the two reads (CR-02).
 

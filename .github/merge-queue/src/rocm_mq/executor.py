@@ -29,10 +29,16 @@ Private helpers (exposed for unit tests):
      unguarded. If the author has pushed between the merge and the stamp,
      abort with ``ActionOutcome(success=False)`` so a stale SHA never receives
      the activation status. T-02-03-02 mitigation.
-  3. Stamp — ``repos.create_commit_status(state="success",
-     context=config.activation_status_context)`` on the merged SHA.
-  4. Label flip — ``issues.add_labels([config.active_label])`` then
+  3. Label flip FIRST — ``issues.add_labels([config.active_label])`` then
      ``_safe_remove_label(config.queued_label)`` (404 swallowed via UK-3).
+     Recoverable on the next cycle (add_labels is idempotent,
+     remove_label swallows 404 — see ``_safe_remove_label``).
+  4. Stamp LAST — ``repos.create_commit_status(state="success",
+     context=config.activation_status_context)`` on the merged SHA. This
+     is the commit point: posting the App's own success status is what
+     binds activation per RFC §4.9. Stamping BEFORE the labels were
+     flipped would split-brain the PR (status=active, labels=queued)
+     on a label-flip failure (CR-03).
 - ``_handle_squash`` — IO-05:
   1. Record the develop branch tip via ``repos.get_branch("develop")`` BEFORE
      the squash (this is the value ``_verify_squash`` will assert against).
@@ -235,16 +241,19 @@ def _handle_activate(
             ),
         )
 
-    # Step 3: stamp the activation status.
-    client.rest.repos.create_commit_status(
-        owner,
-        repo,
-        new_sha,
-        state="success",
-        context=config.activation_status_context,
-    )
-
-    # Step 4: label flip — add mq:active, safely remove mq:queued.
+    # Step 3: label flip FIRST — add mq:active, safely remove mq:queued.
+    # These mutations are recoverable on the next cycle: add_labels is
+    # idempotent (set semantics) and _safe_remove_label swallows 404
+    # (already-absent). Doing the flip BEFORE the stamp ensures that if
+    # any of these calls raises, the activation status is NOT yet posted,
+    # so the decision layer's is_validly_active check (which binds
+    # activation to the App's own status per RFC §4.9) returns False and
+    # the next cycle simply re-runs Activate from a clean slate (CR-03).
+    #
+    # The previous order (stamp → flip) created a split-brain on any
+    # add_labels / remove_label failure: status said "active" while
+    # labels said "queued", and the decision layer could schedule a
+    # Squash for a PR whose human-visible state was still in-queue.
     client.rest.issues.add_labels(
         owner,
         repo,
@@ -252,6 +261,19 @@ def _handle_activate(
         data=[config.active_label],
     )
     _safe_remove_label(client, owner, repo, pr.number, config.queued_label)
+
+    # Step 4: stamp the activation status LAST — this is the commit point.
+    # If this call raises, the labels are already flipped but no activation
+    # evidence exists; the next cycle's derive_pr will not classify the PR
+    # as validly active and will re-Activate (the merge is a 204 no-op, the
+    # label adds are idempotent, and this stamp is retried).
+    client.rest.repos.create_commit_status(
+        owner,
+        repo,
+        new_sha,
+        state="success",
+        context=config.activation_status_context,
+    )
 
     return ActionOutcome(action=action, success=True, error_message=None)
 
