@@ -27,6 +27,9 @@ CLI usage:
     python -m rocm_mq process-cycle --fake --repo owner/repo
     python -m rocm_mq process-cycle --dry-run --fake --repo owner/repo
     python -m rocm_mq process-cycle --repo owner/repo   # uses GITHUB_TOKEN
+    python -m rocm_mq handle --repo owner/repo --event-path $GITHUB_EVENT_PATH
+    python -m rocm_mq audit
+    python -m rocm_mq preflight --repo owner/repo
 
 The ``--fake`` flag injects ``tests.gh_fake.FakeGitHub`` so the full cycle
 runs against an in-memory substitute with no network access — the DOG-01
@@ -42,6 +45,16 @@ PURE-09 compliance: this module imports ``rocm_mq.snapshot`` /
 ``rocm_mq.executor`` (both I/O modules) and ``rocm_mq.decision`` /
 ``rocm_mq.summary`` (both pure). It is intentionally a glue layer; the
 PURE-09 lint excludes it from the pure-layer set.
+
+Phase 3 argparse refactor (plan 03-01):
+``_parse_args`` now uses ``add_subparsers(dest="subcommand", required=True)``
+with four subparsers (``process-cycle``, ``handle``, ``audit``,
+``preflight``); each registers a per-subcommand ``set_defaults(func=run_*)``
+callable so ``main()`` reduces to ``args.func(args)`` wrapped in the
+existing traceback-printing try/except. ``handle`` and ``preflight`` are
+``NotImplementedError`` stubs in this plan — they are wired by plans 03-06
+(cmd_handle) and 03-04 (preflight) respectively. ``audit`` is a Phase 3
+no-op (the RFC §4.3.1 tamper-matrix logic lands in Phase 4).
 """
 
 from __future__ import annotations
@@ -249,26 +262,45 @@ def _build_fake_client() -> Any:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Build the argparse Namespace.
+    """Build the argparse Namespace using a subparser tree.
 
-    The CLI shape is ``rocm-mq process-cycle [--fake] [--dry-run] [--repo OWNER/REPO]``.
-    The ``process-cycle`` subcommand is a positional placeholder — Phase 3
-    will add ``handle`` and ``audit`` subcommands; for Phase 2 it is the
-    only valid value.
+    Phase 3 (plan 03-01) shape — ``add_subparsers(dest="subcommand",
+    required=True)`` with four registered subcommands, each carrying its
+    own isolated flag namespace and a ``set_defaults(func=...)`` that
+    ``main()`` invokes as ``args.func(args)``.
+
+    Subcommands:
+      - ``process-cycle`` (Phase 2, unchanged behaviour): ``--fake``,
+        ``--dry-run``, ``--repo OWNER/REPO``.
+      - ``handle`` (plan 03-06 stub): ``--repo OWNER/REPO``,
+        ``--event-path PATH`` (defaults to ``$GITHUB_EVENT_PATH``).
+      - ``audit`` (Phase 3 no-op stub; Phase 4 fills in RFC §4.3.1
+        tamper-matrix logic): no flags.
+      - ``preflight`` (plan 03-04 stub): ``--repo OWNER/REPO``.
+
+    Backward-compat (RESEARCH.md Area #20): existing internal test calls
+    of the form ``main(["process-cycle", ...])`` continue to work because
+    ``process-cycle`` becomes a subparser of the same literal name. The
+    ``mq-test.yml`` workflow does not invoke ``cmd_process`` directly
+    (runs ``pytest``), so no external CI consumer breaks.
     """
     parser = argparse.ArgumentParser(
         prog="rocm-mq",
         description=(
-            "Federated Merge Queue processor — one cycle of "
-            "read → derive → decide → execute."
+            "Federated Merge Queue — controller CLI for the processor "
+            "cycle (process-cycle), the command handler (handle), the "
+            "tamper-audit job (audit), and the workflow pre-flight check "
+            "(preflight)."
         ),
     )
-    parser.add_argument(
-        "subcommand",
-        choices=["process-cycle"],
-        help="Subcommand to run (Phase 2 only supports process-cycle).",
+    sub = parser.add_subparsers(dest="subcommand", required=True)
+
+    # process-cycle — the Phase 2 orchestrator, unchanged in behaviour.
+    p_cycle = sub.add_parser(
+        "process-cycle",
+        help="Run one merge-queue processor cycle (RFC §4.6).",
     )
-    parser.add_argument(
+    p_cycle.add_argument(
         "--fake",
         action="store_true",
         help=(
@@ -276,15 +308,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "GitHub API. Implies no network access (DOG-01)."
         ),
     )
-    parser.add_argument(
+    p_cycle.add_argument(
         "--dry-run",
         action="store_true",
         help=(
             "Emit the would-be Action list to stdout and exit without "
-            "calling dispatch (Phase 3 WF-07 forward compatibility)."
+            "calling dispatch (WF-07)."
         ),
     )
-    parser.add_argument(
+    p_cycle.add_argument(
         "--repo",
         default=os.environ.get("GITHUB_REPOSITORY", ""),
         help=(
@@ -292,31 +324,80 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "$GITHUB_REPOSITORY (set automatically in GHA runners)."
         ),
     )
+    p_cycle.set_defaults(func=run_process_cycle)
+
+    # handle — Phase 3 plan-03-06 stub; the real cmd_handle module is wired
+    # by that plan. This subparser exists now so mq-handler.yml can be
+    # authored against a stable CLI surface ahead of the implementation.
+    p_handle = sub.add_parser(
+        "handle",
+        help="Handle a /merge or /dequeue issue_comment event (plan 03-06).",
+    )
+    p_handle.add_argument(
+        "--repo",
+        default=os.environ.get("GITHUB_REPOSITORY", ""),
+        help="GitHub repository in OWNER/REPO form.",
+    )
+    p_handle.add_argument(
+        "--event-path",
+        default=os.environ.get("GITHUB_EVENT_PATH", ""),
+        help=(
+            "Path to the GHA event JSON (issue_comment payload). Defaults "
+            "to $GITHUB_EVENT_PATH (set automatically in GHA runners)."
+        ),
+    )
+    p_handle.set_defaults(func=run_handle)
+
+    # audit — Phase 3 no-op stub. The full RFC §4.3.1 tamper-matrix logic
+    # lands in Phase 4 (cmd_audit.py); the subparser exists now so
+    # mq-handler.yml can declare the audit job against a stable surface.
+    p_audit = sub.add_parser(
+        "audit",
+        help="Phase 3 no-op audit stub (Phase 4 implements RFC §4.3.1).",
+    )
+    p_audit.set_defaults(func=run_audit)
+
+    # preflight — Phase 3 plan-03-04 stub. Wires the workflow pre-flight
+    # check (default-branch invariant, PATH_TO_QUEUES loadability, etc.)
+    # in that plan.
+    p_preflight = sub.add_parser(
+        "preflight",
+        help="Workflow pre-flight invariant check (plan 03-04).",
+    )
+    p_preflight.add_argument(
+        "--repo",
+        default=os.environ.get("GITHUB_REPOSITORY", ""),
+        help="GitHub repository in OWNER/REPO form.",
+    )
+    p_preflight.set_defaults(func=run_preflight)
+
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI entrypoint. Returns process exit code.
+# ---------------------------------------------------------------------------
+# Per-subcommand entrypoints — registered via ``set_defaults(func=...)``.
+# ---------------------------------------------------------------------------
 
-    Construction order:
-      1. Parse args.
-      2. Validate ``--repo`` parses as ``owner/repo``.
-      3. Build client (FakeGitHub if --fake, else GitHubClient(GITHUB_TOKEN)).
-      4. Build config (Phase 2: canonical_merge_queue_config — Phase 3 will
-         load from PATH_TO_QUEUES yaml). For now we always use the canonical
-         config; --fake tests inject their own via process_cycle directly.
-         For real runs we still use canonical to keep the cycle runnable
-         end-to-end (Phase 3 wires the yaml loader).
+
+def run_process_cycle(args: argparse.Namespace) -> int:
+    """Run the Phase 2 processor cycle end-to-end.
+
+    Construction order (unchanged from the pre-refactor ``main()`` body):
+      1. Validate ``--repo`` parses as ``owner/repo``.
+      2. Build client (FakeGitHub if --fake, else GitHubClient(GITHUB_TOKEN)).
+      3. Resolve the App's canonical identity via ``resolve_app_identity``
+         (CR-01: sentinel zeros would silently reject every legitimate
+         status/timeline event).
+      4. Build the default MergeQueueConfig (Phase 4 will load
+         PATH_TO_QUEUES yaml).
       5. Compute ``now = datetime.now(tz=UTC)`` — the ONLY datetime.now()
          call at cycle scope in the codebase.
       6. Call ``process_cycle(...)``.
       7. Inspect outcomes; return non-zero if any outcome's success is False.
 
-    Errors raised by argparse (e.g., ``--help``) propagate as ``SystemExit``;
-    the caller handles them.
+    Returns process exit code (0 on success; 1 on any failed outcome or
+    orchestrator exception; 2 on argparse-shape errors).
     """
-    args = _parse_args(argv)
-
     # Validate --repo.
     if "/" not in args.repo or args.repo.count("/") != 1:
         print(
@@ -373,21 +454,14 @@ def main(argv: list[str] | None = None) -> int:
     # Cycle-scope `now` — the ONLY datetime.now(tz=UTC) call in rocm_mq.
     now = datetime.now(tz=UTC)
 
-    try:
-        outcomes = process_cycle(
-            client=client,
-            config=config,
-            owner=owner,
-            repo=repo,
-            dry_run=args.dry_run,
-            now=now,
-        )
-    except Exception as exc:  # pragma: no cover  (orchestrator catch-all)
-        # Preserve the traceback — operators debugging a production cycle
-        # failure need module:line attribution, not just repr(exc) (WR-04).
-        print(f"error: process_cycle raised: {exc!r}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        return 1
+    outcomes = process_cycle(
+        client=client,
+        config=config,
+        owner=owner,
+        repo=repo,
+        dry_run=args.dry_run,
+        now=now,
+    )
 
     # Exit non-zero if any outcome failed. CorruptSquashError already arrives
     # as ActionOutcome(success=False, error_message="<exc>") from
@@ -406,6 +480,83 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     return 0
+
+
+def run_handle(args: argparse.Namespace) -> int:
+    """Stub — plan 03-06 wires ``rocm_mq.cmd_handle.main``.
+
+    Raises ``NotImplementedError`` so a CI invocation of this subcommand
+    before plan 03-06 ships fails loudly via the shared try/except in
+    ``main()`` rather than silently returning 0 (T-03-01-02 mitigation:
+    a stub that no-ops as success would let mq-handler.yml dispatch a
+    no-op masquerading as a handled command).
+    """
+    raise NotImplementedError(
+        "rocm_mq handle: plan 03-06 wires cmd_handle.main "
+        f"(received --repo={args.repo!r} --event-path={args.event_path!r})"
+    )
+
+
+def run_audit(args: argparse.Namespace) -> int:
+    """Phase 3 no-op stub — Phase 4 fills in RFC §4.3.1 tamper-matrix logic.
+
+    Returns 0 cleanly so mq-handler.yml's audit job slot can be authored
+    and exercised end-to-end ahead of the Phase 4 implementation, but
+    prints a structured stderr note so operators reading the workflow
+    run log do not mistake the no-op for "audit logic ran".
+    """
+    print(
+        "audit: Phase 3 no-op stub; Phase 4 implements RFC §4.3.1 logic "
+        "(label tamper, status tamper, comment tamper).",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def run_preflight(args: argparse.Namespace) -> int:
+    """Stub — plan 03-04 wires the real workflow pre-flight check.
+
+    Raises ``NotImplementedError`` so a CI invocation of this subcommand
+    before plan 03-04 ships fails loudly (T-03-01-02 mitigation; same
+    rationale as run_handle).
+    """
+    raise NotImplementedError(
+        "rocm_mq preflight: plan 03-04 wires preflight.main "
+        f"(received --repo={args.repo!r})"
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint — parses argv and dispatches to the registered subcommand.
+
+    After the Phase 3 plan-01 argparse refactor, ``main`` reduces to:
+
+        args = _parse_args(argv)
+        return args.func(args)
+
+    wrapped in a shared try/except that prints repr + traceback to stderr
+    on any uncaught exception. This unifies the failure mode across all
+    four subparser handlers — ``NotImplementedError`` from the
+    ``run_handle`` / ``run_preflight`` stubs surfaces with the same
+    structured stderr the Phase 2 ``process_cycle`` orchestrator-catch
+    pattern used (WR-04).
+
+    Errors raised by argparse (e.g., ``--help``, missing required
+    subcommand) propagate as ``SystemExit``; the caller handles them.
+    """
+    args = _parse_args(argv)
+
+    try:
+        return int(args.func(args))
+    except Exception as exc:
+        # Preserve the traceback — operators debugging a production
+        # failure need module:line attribution, not just repr(exc) (WR-04).
+        # NotImplementedError from the run_handle / run_preflight stubs
+        # also flows through here (T-03-01-02 mitigation: loud failure,
+        # not silent zero).
+        print(f"error: {type(exc).__name__}: {exc!r}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return 1
 
 
 def _build_default_config(*, app_identity: AppIdentity) -> MergeQueueConfig:
@@ -434,4 +585,11 @@ def _build_default_config(*, app_identity: AppIdentity) -> MergeQueueConfig:
     )
 
 
-__all__ = ["main", "process_cycle"]
+__all__ = [
+    "main",
+    "process_cycle",
+    "run_audit",
+    "run_handle",
+    "run_preflight",
+    "run_process_cycle",
+]
