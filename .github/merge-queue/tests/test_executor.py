@@ -934,6 +934,44 @@ def test_verify_squash__tree_diff_ahead_with_files__returns_ok() -> None:
     )
 
 
+def test_verify_squash__tree_diff_status_behind__raises_corrupt_squash_error() -> None:
+    """Phase B failure: status='behind' means develop has commits not in squash.
+
+    Pins the fourth corruption shape the _verify_squash docstring enumerates
+    (alongside identical, diverged, and empty files). 'behind' means the
+    squash commit is BEHIND develop's tip — develop contains commits the
+    squash does not — which is impossible for a freshly-created squash that
+    just advanced develop. Without an explicit test, a future refactor that
+    silently dropped 'behind' from the rejection set (e.g. by changing the
+    pass condition from ``status == 'ahead'`` to ``status != 'identical'``)
+    would not fail any test (WR-03).
+    """
+    from rocm_mq import executor
+
+    fake, pr = _seed_phase_a_passing_fake()
+
+    fake.rest.repos.compare_commits = lambda *a, **kw: SimpleNamespace(  # type: ignore[assignment]
+        parsed_data=SimpleNamespace(
+            status="behind",
+            files=[SimpleNamespace(filename="x.py", status="modified")],
+        )
+    )
+
+    with pytest.raises(CorruptSquashError) as exc_info:
+        executor._verify_squash(
+            client=fake,
+            owner="org",
+            repo="repo",
+            pr=pr,
+            pre_squash_develop_sha="develop_tip_xyz",
+            squash_sha="squash_sha_phaseB",
+        )
+    msg = str(exc_info.value)
+    assert "behind" in msg  # status value surfaced for operator triage
+    assert str(pr.number) in msg
+    assert "squash_sha_phaseB" in msg
+
+
 def test_verify_squash__tree_diff_status_diverged__raises_corrupt_squash_error() -> None:
     """Phase B failure: status='diverged' means squash does not advance develop.
 
