@@ -1116,6 +1116,54 @@ def test_handle_squash__verify_failure__returns_failure_outcome(
     assert "parent" in outcome.error_message.lower() or "squash" in outcome.error_message.lower()
 
 
+def test_handle_squash__phase_b_failure__returns_failure_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """dispatch(Squash) returns success=False when Phase B (compare_commits) raises.
+
+    Companion to test_handle_squash__verify_failure__returns_failure_outcome
+    (which sabotages Phase A via get_commit). Phase B has its own end-to-end
+    failure path through _handle_squash — Phase A passes, Phase B catches
+    silent corruption, _handle_squash translates the CorruptSquashError into
+    ActionOutcome(success=False, error_message=...). Without this test the
+    `except CorruptSquashError` arm of _handle_squash could regress for
+    Phase-B-only failures (e.g. a refactor that changed Phase B to raise a
+    different exception type) and no test would notice (WR-04).
+
+    Drives Phase B failure by monkeypatching compare_commits to return the
+    canonical Apr-2026 silent-corruption shape (status='identical'); Phase A
+    is left to pass through the fake's natural get_commit machinery (the
+    squash commit synthesized by pulls.merge has the correct parent).
+    """
+    from rocm_mq import executor
+
+    monkeypatch.setattr("rocm_mq.executor.time.sleep", lambda _: None)
+
+    fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
+    _patch_repos_get_branch(fake)  # captures pre-squash develop tip
+    config = canonical_merge_queue_config()
+    pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
+
+    # Override compare_commits to return the literal Apr-2026 silent-corruption
+    # shape (status='identical', files=[]). Phase A still passes through the
+    # fake's pulls.merge → state.commits[squash_sha] machinery (correct parent).
+    fake.rest.repos.compare_commits = lambda *a, **kw: SimpleNamespace(  # type: ignore[assignment]
+        parsed_data=SimpleNamespace(status="identical", files=[])
+    )
+
+    outcome = executor.dispatch(
+        Squash(pr=pr), client=fake, config=config, owner="org", repo="repo"
+    )
+
+    assert outcome.success is False
+    assert outcome.error_message is not None
+    msg_lower = outcome.error_message.lower()
+    # Phase B error message shape: "...tree-diff sanity failed — status='identical'..."
+    assert "tree-diff" in msg_lower or "identical" in msg_lower
+    # PR number surfaced for operator triage.
+    assert "42" in outcome.error_message
+
+
 # ---------------------------------------------------------------------------
 # _find_status_comment_id — lazy marker discovery
 # ---------------------------------------------------------------------------
