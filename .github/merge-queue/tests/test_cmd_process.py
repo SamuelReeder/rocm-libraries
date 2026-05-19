@@ -615,5 +615,115 @@ def test_cmd_process_module_importable() -> None:
     assert callable(cmd_process.process_cycle)
 
 
+# ---------------------------------------------------------------------------
+# 14. Subparser refactor — _parse_args produces per-subcommand namespaces
+# ---------------------------------------------------------------------------
+#
+# Phase 3 plan-01: pays the W-5 LOCKED-but-deviated argparse debt from Phase 2
+# by promoting the flat ``choices=["process-cycle"]`` positional to
+# ``add_subparsers(dest="subcommand", required=True)`` with four subparsers
+# (process-cycle, handle, audit, preflight). Each subparser registers a
+# ``set_defaults(func=run_*)`` so ``main()`` reduces to ``args.func(args)``.
+#
+# These tests pin the new shape; the existing process-cycle tests above
+# continue to assert byte-identical end-to-end behavior under --fake.
+
+
+def test_parse_args_subcommand_required() -> None:
+    """Empty argv must raise SystemExit (subparsers required=True)."""
+    from rocm_mq import cmd_process
+
+    with pytest.raises(SystemExit):
+        cmd_process._parse_args([])
+
+
+def test_parse_args_process_cycle_dispatches_to_run_process_cycle() -> None:
+    """process-cycle subparser populates --fake/--dry-run/--repo and func."""
+    from rocm_mq import cmd_process
+
+    args = cmd_process._parse_args(
+        ["process-cycle", "--fake", "--repo", "x/y"]
+    )
+    assert args.subcommand == "process-cycle"
+    assert args.fake is True
+    assert args.dry_run is False
+    assert args.repo == "x/y"
+    assert args.func is cmd_process.run_process_cycle
+
+
+def test_parse_args_handle_dispatches_to_run_handle() -> None:
+    """handle subparser populates --repo/--event-path and func."""
+    from rocm_mq import cmd_process
+
+    args = cmd_process._parse_args(
+        ["handle", "--repo", "x/y", "--event-path", "/tmp/event.json"]
+    )
+    assert args.subcommand == "handle"
+    assert args.repo == "x/y"
+    assert args.event_path == "/tmp/event.json"
+    assert args.func is cmd_process.run_handle
+
+
+def test_parse_args_audit_dispatches_to_run_audit() -> None:
+    """audit subparser exists and dispatches to run_audit."""
+    from rocm_mq import cmd_process
+
+    args = cmd_process._parse_args(["audit"])
+    assert args.subcommand == "audit"
+    assert args.func is cmd_process.run_audit
+
+
+def test_parse_args_preflight_dispatches_to_run_preflight() -> None:
+    """preflight subparser populates --repo and func."""
+    from rocm_mq import cmd_process
+
+    args = cmd_process._parse_args(["preflight", "--repo", "x/y"])
+    assert args.subcommand == "preflight"
+    assert args.repo == "x/y"
+    assert args.func is cmd_process.run_preflight
+
+
+# ---------------------------------------------------------------------------
+# 15. main() dispatch — subcommand stubs surface their expected exit codes
+# ---------------------------------------------------------------------------
+
+
+def test_main_audit_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
+    """audit is a Phase 3 no-op stub: exits 0 with a stderr note."""
+    from rocm_mq import cmd_process
+
+    rc = cmd_process.main(["audit"])
+    assert rc == 0
+    err = capsys.readouterr().err
+    # The Phase 3 audit stub announces itself so operators don't mistake the
+    # no-op for "audit logic ran"; Phase 4 fills in the RFC §4.3.1 matrix.
+    assert "audit" in err.lower()
+    assert "phase 4" in err.lower() or "no-op" in err.lower()
+
+
+def test_main_handle_stub_raises_not_implemented(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """handle is a NotImplementedError stub until plan 03-06 wires cmd_handle."""
+    from rocm_mq import cmd_process
+
+    rc = cmd_process.main(["handle", "--repo", "x/y"])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "NotImplementedError" in err
+
+
+def test_main_preflight_stub_raises_not_implemented(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """preflight is a NotImplementedError stub until plan 03-04 wires preflight."""
+    from rocm_mq import cmd_process
+
+    rc = cmd_process.main(["preflight", "--repo", "x/y"])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "NotImplementedError" in err
+
+
 # Defensive — MagicMock is imported so static linters don't drop the import.
 _ = MagicMock
