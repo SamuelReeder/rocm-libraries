@@ -1,6 +1,10 @@
-# Hypothesis database — ignore the directory but keep the examples database
-.hypothesis/
-!.hypothesis/examples/
+# Hypothesis database — track .gitkeep to establish the examples dir; ignore internal DB files
+# (Hypothesis saves counterexamples to .hypothesis/examples/ — the .gitkeep ensures the
+# directory exists in the repo; actual counterexample files are generated at test-run time)
+.hypothesis/constants/
+.hypothesis/unicode_data/
+.hypothesis/*.json
+.hypothesis/examples/*/
 
 # Python build artifacts
 __pycache__/
