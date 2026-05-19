@@ -391,10 +391,24 @@ class _SearchNS:
 
     @staticmethod
     def _parse_labels(q: str) -> set[str]:
+        """Extract label values from a GitHub search query string.
+
+        Real GitHub search accepts ``label:"mq:hipdnn"`` (quoted form is the
+        documented-safe shape when the value contains characters the query
+        parser handles specially, such as colons — WR-02). Strip surrounding
+        double quotes so the fake's match behaves the same way the real API
+        does. Tokens without quotes are passed through unchanged for
+        backwards compatibility with tests that emit the unquoted form.
+        """
         labels: set[str] = set()
         for token in q.split():
-            if token.startswith("label:"):
-                labels.add(token[len("label:") :])
+            if not token.startswith("label:"):
+                continue
+            value = token[len("label:") :]
+            # Strip a single matched pair of surrounding double quotes.
+            if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+                value = value[1:-1]
+            labels.add(value)
         return labels
 
 

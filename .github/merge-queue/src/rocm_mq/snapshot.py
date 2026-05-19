@@ -313,14 +313,36 @@ def build_snapshot(
     pr_numbers: list[int] = []  # preserves first-seen order for stable output
     seen: set[int] = set()
     for queue in config.all_queues:
-        q = f"is:pr is:open repo:{owner}/{repo} label:{config.label_prefix}{queue}"
-        resp = client.rest.search.issues_and_pull_requests(q=q)
+        # Quote the label value (WR-02): GitHub search's `label:` qualifier
+        # parses colons specially, and labels like `mq:hipdnn` are documented-
+        # safe only when wrapped in double quotes. Silent search misses on
+        # colon-bearing labels would forget PRs from the queue — an RFC §6
+        # head-of-all-queues violation.
+        label_value = f"{config.label_prefix}{queue}"
+        q = f'is:pr is:open repo:{owner}/{repo} label:"{label_value}"'
+        # per_page=100 (search API max) maximizes what we capture in one call.
+        # Full pagination is a Phase 3 follow-up (WR-02); for now we hard-
+        # guard against silent truncation via total_count below — the RFC's
+        # API-rate-limit budget assumes <30 PRs per cycle, so a per_page=100
+        # guard ringes the budget with comfortable headroom.
+        resp = client.rest.search.issues_and_pull_requests(q=q, per_page=100)
         data = resp.parsed_data
         assert not getattr(data, "incomplete_results", False), (
             f"search returned incomplete_results=True for queue={queue!r}; "
             "aborting cycle (the next 3-min cron tick retries — RFC §4.6)"
         )
-        for item in getattr(data, "items", []) or []:
+        items = list(getattr(data, "items", []) or [])
+        total_count = int(getattr(data, "total_count", len(items)) or len(items))
+        # Hard guard against silent truncation (WR-02). If we ever exceed
+        # 100 PRs in one queue, this fails loudly rather than dropping PRs
+        # from the snapshot — at which point the Phase 3 pagination work
+        # becomes prerequisite.
+        assert total_count <= len(items), (
+            f"search for queue={queue!r} returned total_count={total_count} "
+            f"but only {len(items)} items fit in per_page=100; pagination "
+            "is required (WR-02 follow-up). Aborting cycle."
+        )
+        for item in items:
             number = int(item.number)
             if number in seen:
                 continue

@@ -344,6 +344,57 @@ def test_build_snapshot__incomplete_results_raises() -> None:
         build_snapshot(client, config, owner="SamuelReeder", repo="rocm-libraries")
 
 
+def test_build_snapshot__search_query_quotes_label_value() -> None:
+    """The search query must wrap the mq:<queue> label in double quotes (WR-02).
+
+    GitHub search's label: qualifier needs quoted values when they contain
+    colons (e.g., mq:hipdnn); without quotes the search may silently miss
+    PRs and the federated merge queue would forget them (RFC §6
+    head-of-all-queues violation).
+    """
+    client = _FakeClient()
+    config = canonical_merge_queue_config()
+    search_data = SimpleNamespace(
+        incomplete_results=False,
+        items=[],
+        total_count=0,
+    )
+    client.rest.search.issues_and_pull_requests.return_value = _resp(search_data)
+
+    build_snapshot(client, config, owner="SamuelReeder", repo="rocm-libraries")
+
+    # Every call must use the quoted label form.
+    assert client.rest.search.issues_and_pull_requests.called
+    for call in client.rest.search.issues_and_pull_requests.call_args_list:
+        q = call.kwargs.get("q") or (call.args[0] if call.args else "")
+        assert 'label:"' in q, (
+            f"search query missing quoted label form (WR-02): q={q!r}"
+        )
+
+
+def test_build_snapshot__search_total_count_exceeds_items__raises() -> None:
+    """total_count > len(items) implies pagination is needed (WR-02 guard).
+
+    Full pagination support is a Phase 3 follow-up; the assertion guards
+    against silently dropping PRs from the snapshot when a queue grows
+    past per_page=100.
+    """
+    client = _FakeClient()
+    config = canonical_merge_queue_config()
+    # Search reports 250 total but only returns 100 items → silent truncation
+    # without the guard.
+    items = [SimpleNamespace(number=n) for n in range(1, 101)]
+    search_data = SimpleNamespace(
+        incomplete_results=False,
+        items=items,
+        total_count=250,
+    )
+    client.rest.search.issues_and_pull_requests.return_value = _resp(search_data)
+
+    with pytest.raises(AssertionError, match="pagination is required"):
+        build_snapshot(client, config, owner="SamuelReeder", repo="rocm-libraries")
+
+
 def test_build_snapshot__combines_check_runs_and_commit_statuses() -> None:
     """OQ-4: required_check_results carries entries from BOTH check runs AND statuses."""
     client = _FakeClient()
