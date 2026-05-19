@@ -50,12 +50,13 @@ Plans:
   3. Post-squash verification reads back the merged commit on `develop` and asserts `commit.parents[0]` matches the pre-merge tip plus tree-diff sanity (defends Pitfall 8 / GitHub Apr-2026 silent-corruption pattern); failure aborts the cycle and surfaces a structured alert.
   4. Contract tests pin `gh_fake.py` to real-GitHub semantics for `(SHA, context)` status overwrite, label-vs-timeline consistency lag, and App-vs-workflow creator distinctions; the same test suite passes against both fake and real client at the protocol boundary.
   5. Full per-commit Python suite (PURE + IO contract + executor + Hypothesis) runs green in CI on every commit to the fork branch.
-**Plans**: 4 plans
+**Plans**: 5 plans (4 original + 1 gap-closure)
 Plans:
-- [ ] 02-01-PLAN.md — gh.py thin client + AppIdentity resolution + PURE-09 I/O lint + Phase 1 ruff cleanup (IO-01)
-- [ ] 02-02-PLAN.md — snapshot.py builder + gh_fake.py in-memory fake + contract tests (IO-02, IO-06)
-- [ ] 02-03-PLAN.md — executor.py dispatch + activation state machine + idempotency + post-squash verification (IO-03, IO-04, IO-05)
-- [ ] 02-04-PLAN.md — cmd_process.py CLI entrypoint + end-to-end test + GHA CI workflow (IO-07, DOG-01)
+- [x] 02-01-PLAN.md — gh.py thin client + AppIdentity resolution + PURE-09 I/O lint + Phase 1 ruff cleanup (IO-01)
+- [x] 02-02-PLAN.md — snapshot.py builder + gh_fake.py in-memory fake + contract tests (IO-02, IO-06)
+- [x] 02-03-PLAN.md — executor.py dispatch + activation state machine + idempotency + post-squash verification (IO-03, IO-04, IO-05)
+- [x] 02-04-PLAN.md — cmd_process.py CLI entrypoint + end-to-end test + GHA CI workflow (IO-07, DOG-01)
+- [x] 02-05-PLAN.md — gap closure for SC#3 tree-diff sanity in _verify_squash (Phase B via repos.compare_commits)
 
 ### Phase 3: Handler + Processor on Fork
 **Goal**: A real fork PR can be `/merge`d and squash-merged through the queue end-to-end, with all RFC §6 happy-path and edge-case scenarios demonstrated against the fork's real CI.
