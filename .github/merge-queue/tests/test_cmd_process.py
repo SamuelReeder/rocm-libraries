@@ -713,16 +713,56 @@ def test_main_handle_stub_raises_not_implemented(
     assert "NotImplementedError" in err
 
 
-def test_main_preflight_stub_raises_not_implemented(
+def test_main_preflight_dispatches_to_module(
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """preflight is a NotImplementedError stub until plan 03-04 wires preflight."""
-    from rocm_mq import cmd_process
+    """preflight subcommand dispatches into rocm_mq.preflight.main (plan 03-04 wiring).
 
-    rc = cmd_process.main(["preflight", "--repo", "x/y"])
-    assert rc != 0
+    The NotImplementedError stub from plan 03-01 is replaced by a real
+    delegation to rocm_mq.preflight.main. Pin both layers of behaviour:
+
+      1. cmd_process.run_preflight calls preflight.main with the parsed --repo
+         flag re-serialized (preflight.main re-parses so each CLI stays
+         independently usable).
+      2. The exit code preflight.main returns is what cmd_process.main returns
+         (here 0, with a fake-backed happy path).
+    """
+    from rocm_mq import cmd_process, preflight
+
+    monkeypatch.setenv("GITHUB_TOKEN", "ghs_dummy")
+
+    fake = FakeGitHub(FakeRepoState())
+
+    def fake_get(owner: str, repo: str, **_: object) -> Any:
+        from types import SimpleNamespace
+
+        return SimpleNamespace(parsed_data=SimpleNamespace(default_branch="develop"))
+
+    def fake_get_content(
+        owner: str, repo: str, path: str, *, ref: str = "", **_: object
+    ) -> Any:
+        from types import SimpleNamespace
+
+        import base64 as _b64
+
+        return SimpleNamespace(
+            parsed_data=SimpleNamespace(
+                content=_b64.b64encode(b"queues:\n  - hipdnn\n").decode()
+            )
+        )
+
+    fake.rest.repos.get = fake_get  # type: ignore[attr-defined]
+    fake.rest.repos.get_content = fake_get_content  # type: ignore[attr-defined]
+    monkeypatch.setattr(preflight, "GitHubClient", lambda token: fake)
+
+    rc = cmd_process.main(["preflight", "--repo", "owner/repo"])
+    assert rc == 0
     err = capsys.readouterr().err
-    assert "NotImplementedError" in err
+    # No NotImplementedError stack — dispatch happened cleanly.
+    assert "NotImplementedError" not in err
+    # The preflight module's happy-path log surfaces through.
+    assert "preflight passed" in err
 
 
 # Defensive — MagicMock is imported so static linters don't drop the import.
