@@ -64,6 +64,7 @@ import os
 import sys
 import traceback
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rocm_mq.decision import decide_cycle, derive_snapshot
@@ -113,8 +114,14 @@ def process_cycle(
          outcomes. No dispatch.
       5. Otherwise: ``dispatch(action, client=..., config=..., owner=...,
          repo=...)`` per action. Collect outcomes.
-      6. Render the cycle summary and append it to ``$GITHUB_STEP_SUMMARY``
-         if that env var is set (it is set automatically inside GHA runners).
+      6. Render the cycle summary and write it to TWO sinks
+         (RESEARCH.md Area #11):
+           - append to ``$GITHUB_STEP_SUMMARY`` (if set — automatic in
+             GHA runners) for the per-run Actions UI summary panel;
+           - OVERWRITE the file at ``$MQ_CYCLE_SUMMARY_PATH`` (default
+             ``cycle-summary.md``) so ``actions/upload-artifact`` can
+             publish it for downstream dogfood drivers to fetch via the
+             GitHub artifacts API.
       7. Return the outcomes tuple.
 
     The ``now`` argument is the single cycle-scope timestamp; it is threaded
@@ -186,6 +193,26 @@ def process_cycle(
             fh.write(summary)
             if not summary.endswith("\n"):
                 fh.write("\n")
+
+    # Second sink: cycle-summary.md file (RESEARCH.md Area #11). Plan
+    # 03-08 exposes this file as an actions/upload-artifact upload so the
+    # Wave-4 dogfood drivers can download a structured copy of the cycle
+    # summary via the GitHub artifacts API (raw run-logs zip is not
+    # cleanly parseable). Unlike $GITHUB_STEP_SUMMARY (appended), this
+    # path is OVERWRITTEN per cycle — each cycle's summary stands alone.
+    # Default path matches the upload-artifact step's `path:` input in
+    # .github/workflows/mq-processor.yml.
+    cycle_summary_path = os.environ.get(
+        "MQ_CYCLE_SUMMARY_PATH", "cycle-summary.md"
+    )
+    cycle_summary_file = Path(cycle_summary_path)
+    # Create the parent dir if missing — the workflow's working-directory
+    # is .github/merge-queue, so the default cycle-summary.md lands there
+    # without mkdir, but explicit MQ_CYCLE_SUMMARY_PATH overrides may
+    # point into a nested directory that does not yet exist.
+    cycle_summary_file.parent.mkdir(parents=True, exist_ok=True)
+    payload = summary if summary.endswith("\n") else summary + "\n"
+    cycle_summary_file.write_text(payload, encoding="utf-8")
 
     return tuple(outcomes)
 
