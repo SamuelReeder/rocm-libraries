@@ -87,13 +87,21 @@ def _count_status_comments(
     )
 
 
-def _count_eyes_reactions(client: Any, comment_ids: list[int]) -> int:
+def _count_eyes_reactions(
+    client: Any, comment_ids: list[int], *, owner: str = "", repo: str = ""
+) -> int:
     """Count ``eyes`` reactions recorded against ``comment_ids``.
 
-    The real API exposes ``reactions.list_for_issue_comment`` per-comment;
-    FakeGitHub records an append-only log in ``state.reactions_log`` of
-    ``(comment_id, content)`` tuples. We read whichever surface is present
-    (tests can ALSO patch the fake by populating the log directly).
+    The real API exposes ``reactions.list_for_issue_comment(owner, repo, cid)``
+    per-comment; FakeGitHub records an append-only log in
+    ``state.reactions_log`` of ``(comment_id, content)`` tuples. We read
+    whichever surface is present (tests can ALSO patch the fake by populating
+    the log directly).
+
+    ``owner`` and ``repo`` default to empty strings for the fake/log path
+    (which ignores them) but MUST be passed when the live-API fallback runs;
+    githubkit rejects empty path-component URLs with a 404 on the
+    ``/repos///issues/...`` shape.
     """
     state = getattr(client, "state", None)
     log = getattr(state, "reactions_log", None) if state is not None else None
@@ -104,7 +112,7 @@ def _count_eyes_reactions(client: Any, comment_ids: list[int]) -> int:
     # reactions; we count items where content == "eyes").
     total = 0
     for cid in comment_ids:
-        resp = client.rest.reactions.list_for_issue_comment("", "", cid)
+        resp = client.rest.reactions.list_for_issue_comment(owner, repo, cid)
         for r in list(resp.parsed_data or []):
             if str(getattr(r, "content", "")) == "eyes":
                 total += 1
@@ -162,7 +170,9 @@ def run_scenario(
     # 4. Collect the three idempotency counters.
     mq_queued_count = _count_mq_queued_label(client, owner, repo, pr_number)
     status_count = _count_status_comments(client, owner, repo, pr_number)
-    eyes_count = _count_eyes_reactions(client, [trigger_id_1, trigger_id_2])
+    eyes_count = _count_eyes_reactions(
+        client, [trigger_id_1, trigger_id_2], owner=owner, repo=repo
+    )
 
     no_duplicate_state = (
         mq_queued_count == 1 and status_count == 1 and eyes_count == 2
