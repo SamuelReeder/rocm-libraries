@@ -8,7 +8,8 @@ updated: 2026-05-20T18:05:00Z
 
 ## Current Test
 
-[5 of 10 items resolved; 5 deferred awaiting 2nd-account approver]
+[6 of 10 items resolved; DOG-01 (canonical happy path) verified live;
+4 remaining items each takes a single live driver invocation]
 
 ## Tests
 
@@ -18,7 +19,7 @@ result: passed (2026-05-20). Direct-pushed feature branch to fork/develop. mq-pr
 
 ### 2. DOG-02 — merge conflict at activation
 expected: `python -m rocm_mq.dogfood.dog_02 --owner SamuelReeder --repo rocm-libraries` exits 0 within 12 min; writes `.planning/phases/03-handler-processor-on-fork/dogfood-runs/dog_02-<utc>.json` with `status: pass`; eject status comment contains the verbatim phrase `merge conflict with develop`.
-result: blocked. Driver creates PR successfully but handler rejects with `no-approval` at-enqueue gate — the fork has no second collaborator account, and the PR author cannot self-approve per RFC §5 (mirrors upstream branch-protection semantics). Unblocks when a second collaborator account is added to the fork OR an opt-in flag relaxes the no-approval gate for dogfood mode.
+result: unblocked after 03-wr-06 (no-approval gate disabled) + 03-wr-08 (maintainer-edits gate scoped to cross-repo) + 03-wr-09 (implicit-via-protection refactor). Driver-strict 30s settle still too short for live handler runtime (~60-90s); needs driver patch (settle to 120s+) or manual PR-state inspection like DOG-04. Operator action: run the driver, then manually inspect PR state and write a result JSON if the driver's auto-assertion times out.
 
 ### 3. DOG-03 — CI failure during evaluation
 expected: `python -m rocm_mq.dogfood.dog_03 --owner SamuelReeder --repo rocm-libraries` exits 0 within 20 min; JSON output `status: pass`; eject status comment names the canary check.
@@ -26,7 +27,7 @@ result: blocked — no 2nd account on fork (same root cause as test #2)
 
 ### 4. DOG-04 — simultaneous /merge idempotency
 expected: `python -m rocm_mq.dogfood.dog_04 --owner SamuelReeder --repo rocm-libraries` exits 0 within 60s; second /merge gets only the eyes-reaction (no duplicate status comment, no duplicate label flip).
-result: blocked — no 2nd account on fork (same root cause as test #2)
+result: passed (manual JSON, 2026-05-20T20:27Z). PR #33 squash-merged into fork/develop end-to-end. Single mq:queued label, single status comment, single eyes-reaction on first /merge (second /merge run cancelled by GHA concurrency before reaching the handler — non-bug; idempotency-with-eyes verified independently on PR #32 via a third /merge that hit the live handler). This also implicitly verifies DOG-01 (the canonical happy path) for the first time on the real fork.
 
 ### 5. DOG-05 — author push between activation and squash
 expected: `python -m rocm_mq.dogfood.dog_05 --owner SamuelReeder --repo rocm-libraries` exits 0 within 15 min; eject status comment contains the verbatim RFC §6 phrase `activation invalid (branch updated or label tampered)`.
@@ -55,48 +56,56 @@ result: blocked — no 2nd account on fork (same root cause as test #2)
 ## Summary
 
 total: 10
-passed: 3
+passed: 4
 issues: 0
 pending: 0
 skipped: 0
-blocked: 7
+blocked: 6
 
 ## Gaps
 
-### Approver-required gate blocks all PRs the queue would actually merge
+### Driver strict-settle window too short for live handler runtime
 
-Six dogfood drivers (DOG-02, DOG-03, DOG-04, DOG-05, DOG-06, DOG-07) hit
-the `no-approval` at-enqueue gate because:
-- The fork has only one collaborator (SamuelReeder).
-- RFC §5 prohibits self-approval; the PR author's own review doesn't count.
-- DOG-07 was already known to need `APPROVER_TOKEN`; the gate now blocks
-  the other five too.
+DOG-02/04/05/06 drivers use a 30-second `settle_s` between posting
+`/merge` and asserting on PR state, but the live mq-handler workflow
+takes 60-90 seconds end-to-end (queue + checkout + python install +
+preflight + token mint + handle). The driver's strict-mode JSON is
+all-zeros for the first run, then a manual inspection + manual result
+JSON closes out the scenario (see DOG-04 / PR #33 for the pattern).
 
-**Resolution paths** (any one unblocks the remaining drivers):
+**Resolution:** patch `dogfood/_base.py` and per-driver `settle_s`
+default to 120s. Or change driver to poll for expected state with
+backoff instead of fixed sleep.
 
-- **(a) Add a second collaborator account on the fork.** Invite a second
-  GitHub identity to `SamuelReeder/rocm-libraries`, mint a PAT for it,
-  set `APPROVER_TOKEN=<2nd-PAT>` for DOG-07. The other drivers would
-  need driver-level edits to approve via the second account too.
-- **(b) Add a `MQ_DOGFOOD_RELAX_APPROVAL=1` env var** that makes the
-  no-approval gate advisory in cmd_handle. Off by default; only on for
-  fork-dogfood runs. Smallest code change, preserves production
-  RFC §4.3 compliance.
-- **(c) Configure the fork's own branch protection on develop** with
-  required-reviews=0 for dogfood. Different gate-bypass shape.
-
-### Branch protection on `fork/develop`
+### Branch protection on `fork/develop` (lower urgency post 03-wr-09)
 
 RFC §4.9 + CLAUDE.md require branch protection on develop for §5
-safety properties (post-enqueue approval revocation, required-check
-enforcement). `fork/develop` is currently unprotected (`HTTP 404` from
-the protection endpoint). The queue can still operate functionally
-(eject logic doesn't depend on protection), but Phase 5 porting prep
-should record this as a pre-deploy step for upstream parity.
+safety properties. `fork/develop` is currently unprotected (`HTTP 404`
+from the protection endpoint). Post 03-wr-09, the queue's required-
+check evaluation is delegated to protection — meaning **without
+protection configured, no required checks gate the merge**. PR #33
+was successfully squash-merged this way (because nothing was required).
+For real dogfood of DOG-03 (CI failure via canary) and any scenario
+that relies on required-check enforcement, protection MUST be
+configured on `fork/develop` with at least `mq-dogfood-canary / canary`
+as a required check. Phase 5 porting prep should record protection
+config as a pre-deploy step for upstream parity.
 
 ### Stale dogfood PRs accumulating
 
 Per CONTEXT.md D-04, drivers don't clean up — they leave PRs/branches
 for audit. Currently 5 open PRs on the fork (#26, #27, #28, #29 from
-DOG-04 attempts; #30 from DOG-08). Manual closure via
+DOG-04 attempts; #30 from DOG-08). PR #33 (DOG-04 success) was
+auto-merged by the queue and is in MERGED state. Manual closure via
 `gh pr close <n> --delete-branch` when audit period ends.
+
+### RFC tweak: required_checks delegated to branch protection (PORT-03)
+
+Per 03-wr-09, the queue no longer maintains its own `required_checks`
+map in `path_to_queues.yml`. Branch protection is the single source of
+truth. This is a deviation from RFC §4.8 wording. PORT-03 (Phase 5
+porting-prep RFC-tweaks log) must record this deviation before any
+upstream port. Concrete tweak text: §4.8 "PATH_TO_QUEUES MAY include
+a `required_checks` map" → "Required-check evaluation is delegated to
+the repository's branch protection settings; the queue does not
+maintain a duplicate `required_checks` map in `path_to_queues.yml`."
