@@ -143,6 +143,14 @@ jobs:
           # through the App identity (slug-pinned per RFC §4.3.1).
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
+          # App identity for resolve_app_identity (gh.py). The slug comes
+          # from the action's JWT-attested output (no env-var trust
+          # required); MQ_APP_ID still comes from a repo var because the
+          # action does not echo it back (RFC §4.3.1 / 03-wr-01 fix).
+          # Installation tokens cannot call /app — resolve_app_identity
+          # MUST take this env-var-trust path here.
+          MQ_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          MQ_APP_ID: ${{ vars.MQ_APP_ID }}
         run: python -m rocm_mq handle --repo ${{ github.repository }} --event-path "$GITHUB_EVENT_PATH"
 
   audit:

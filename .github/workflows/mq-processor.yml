@@ -189,6 +189,19 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           DRY_RUN: ${{ inputs.dry-run || 'false' }}
           MQ_CYCLE_SUMMARY_PATH: ${{ github.workspace }}/.github/merge-queue/cycle-summary.md
+          # App identity for resolve_app_identity (gh.py). The slug comes
+          # from the action's JWT-attested output (the action knows the
+          # slug because it just authenticated as the App); MQ_APP_ID
+          # comes from a repo var because the action does not echo it
+          # back (RFC §4.3.1 / 03-wr-01 fix).
+          #
+          # Installation tokens cannot call /app — apps.get_authenticated
+          # returns HTTP 401. resolve_app_identity MUST take this
+          # env-var-trust path on the runtime workflow; the live JWT
+          # call is preserved only for local-dev where the operator
+          # holds the App private key directly.
+          MQ_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          MQ_APP_ID: ${{ vars.MQ_APP_ID }}
         run: |
           if [ "$DRY_RUN" = "true" ]; then
             python -m rocm_mq process-cycle --dry-run --repo ${{ github.repository }}

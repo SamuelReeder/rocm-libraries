@@ -33,6 +33,7 @@ Retry policy:
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -193,13 +194,31 @@ class GitHubClient:
 def resolve_app_identity(client: GitHubClient) -> AppIdentity:
     """Resolve the merge-queue App's canonical identity at startup.
 
-    Two-call pattern (RESEARCH.md OQ-1 / A1):
-    1. ``apps.get_authenticated()`` returns an ``Integration`` model carrying
-       ``.id`` (the App ID) and ``.slug``.
-    2. The Integration model does NOT carry the bot user id. We synthesize the
-       bot login as ``f"{slug}[bot]"`` and call ``users.get_by_username(...)``
-       to fetch the bot's stable numeric user id (needed by
-       ``is_app_identity_actor`` for timeline-event identity checks).
+    Two source modes:
+
+    1. **Env-var-trust path (runtime / production)** — when BOTH ``MQ_APP_SLUG``
+       and ``MQ_APP_ID`` are set, trust them. The workflow gets the slug from
+       ``actions/create-github-app-token@v3``'s ``app-slug`` output (the action
+       has JWT-attested it), and the numeric ``MQ_APP_ID`` from a repo variable
+       set during plan 03-05's operator setup. ``bot_user_id`` still comes from
+       a live ``users.get_by_username`` lookup (works with installation tokens,
+       fails closed if the slug is wrong because the bot login won't resolve).
+
+       This path is required because the installation token minted by the
+       action **cannot** call ``/app`` endpoints — those require App JWT
+       authentication. Calling ``apps.get_authenticated`` from the runtime
+       client returns HTTP 401 (live-fork dispatch run 26173804944 on
+       2026-05-20 confirmed this).
+
+    2. **JWT fallback (local-dev)** — when env vars are absent OR malformed,
+       fall back to the original ``apps.get_authenticated`` + ``users.get_by_username``
+       two-call pattern. Preserves the local-dev workflow where the operator
+       holds the App private key and has minted a JWT directly.
+
+    Half-trust is not trust: if only one of the two env vars is set, fall back
+    rather than mixing trust sources. ``MQ_APP_ID`` that fails to parse as int
+    raises ``ValueError`` immediately rather than silently falling back —
+    misconfiguration must fail loud.
 
     Returns a frozen ``AppIdentity`` with all three fields populated. Intended
     to be called ONCE at processor startup; the result is then plumbed through
@@ -209,10 +228,28 @@ def resolve_app_identity(client: GitHubClient) -> AppIdentity:
     per processor invocation, and a failure here should fail the whole cycle
     rather than mask a misconfigured token.
     """
-    integration_resp = client.rest.apps.get_authenticated()
-    integration = integration_resp.parsed_data
-    app_id: int = int(integration.id)
-    slug: str = str(integration.slug)
+    slug_env = os.environ.get("MQ_APP_SLUG")
+    app_id_env = os.environ.get("MQ_APP_ID")
+
+    if slug_env and app_id_env:
+        try:
+            app_id = int(app_id_env)
+        except ValueError as exc:
+            msg = (
+                f"MQ_APP_ID env var must parse as int, got {app_id_env!r}. "
+                "Check the repo variable set during plan 03-05."
+            )
+            raise ValueError(msg) from exc
+        slug = slug_env
+    else:
+        # JWT fallback: local-dev path where the client has App JWT auth.
+        # The installation-token path (runtime workflow) MUST go through the
+        # env-var branch above; this branch hits /app which returns 401 with
+        # an installation token.
+        integration_resp = client.rest.apps.get_authenticated()
+        integration = integration_resp.parsed_data
+        app_id = int(integration.id)
+        slug = str(integration.slug)
 
     bot_login = f"{slug}[bot]"
     user_resp = client.rest.users.get_by_username(bot_login)
