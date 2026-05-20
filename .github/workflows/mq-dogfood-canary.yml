@@ -1,0 +1,56 @@
+# .github/workflows/mq-dogfood-canary.yml — deterministic CI-fail signal
+# for DOG-03 (03-CONTEXT.md D-03). The dogfood driver opens a PR under
+# `dogfood/**` with the literal substring `[dogfood-ci-fail]` in the title
+# to force this workflow to exit 1; otherwise it exits 0. The check-run
+# this workflow registers is the required check for the synthetic
+# `dogfood-canary` queue in .github/merge-queue/path_to_queues.yml (plan
+# 03-03), so the §6 required-check eviction path can be exercised without
+# polluting the six real production queues.
+#
+# This file is in SELF_BOOTSTRAP_PATHS (rocm_mq.config.SELF_BOOTSTRAP_PATHS,
+# plan 03-02). /merge on any PR whose diff touches this file is REJECTED
+# by the handler; landing edits requires manual maintainer merge (RFC §8).
+#
+# Trigger is `pull_request` (NOT `pull_request_target`). The canary needs
+# no secrets, no App token, no repo-content checkout; it decides entirely
+# from the event payload. Using `pull_request` sidesteps PITFALLS.md
+# Pitfall 1 (the PR-head-checkout-under-_target trap) by structural
+# impossibility.
+#
+# Phase 5 porting-prep STRIPS this entire file from the upstream-bound
+# copy (03-CONTEXT.md `<specifics>`); the upstream queue has no synthetic
+# canary requirement.
+
+name: mq-dogfood-canary
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths: ['dogfood/**']
+
+# Workflow-level minimum scope. The canary reads nothing beyond the event
+# payload; `contents: read` is the floor `pull_request` workflows get by
+# default, declared explicitly per CLAUDE.md minimum-scope discipline.
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Decide canary verdict
+        # PR title is bound to an env var (NOT shell-interpolated via
+        # `${{ ... }}` inside the run block) so an adversarial title
+        # like `"; rm -rf $HOME #` cannot escape the bash string literal.
+        # The comparison is bash literal-substring (no glob/regex
+        # expansion), satisfying T-03-09-03 in the threat register.
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if [[ "$TITLE" == *"[dogfood-ci-fail]"* ]]; then
+            echo "Canary forced FAIL by title marker [dogfood-ci-fail]"
+            echo "TITLE=$TITLE"
+            exit 1
+          fi
+          echo "Canary PASS — no [dogfood-ci-fail] marker in PR title"
