@@ -170,3 +170,124 @@ def test_app_slug_env_constant() -> None:
 def test_app_id_env_constant() -> None:
     """APP_ID_ENV pins the env-var NAME used by plan 03-06's handler."""
     assert APP_ID_ENV == "MQ_APP_ID"
+
+
+# ---------------------------------------------------------------------------
+# build_config_from_develop — shared YAML → MergeQueueConfig bridge
+# ---------------------------------------------------------------------------
+
+
+def test_build_config_from_develop__parses_seven_queue_yaml(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real-shape path_to_queues.yml (7 queues, 6 path entries) maps to a
+    MergeQueueConfig with all_queues + path_to_queues populated correctly.
+    """
+    from rocm_mq.config import build_config_from_develop
+    from rocm_mq.state import AppIdentity
+
+    monkeypatch.setenv("MQ_APP_SLUG", "merge-clanker")
+    monkeypatch.setenv("MQ_APP_ID", "3776213")
+
+    fake = FakeGitHub(FakeRepoState())
+    yaml_payload = """\
+queues:
+  - hipdnn
+  - miopen-provider
+  - hipblaslt-provider
+  - hip-kernel-provider
+  - fusilli-provider
+  - integration-tests
+  - dogfood-canary
+paths:
+  - path: projects/hipdnn/
+    queues: [hipdnn]
+  - path: dnn-providers/miopen-provider/
+    queues: [miopen-provider]
+  - path: dnn-providers/hipblaslt-provider/
+    queues: [hipblaslt-provider]
+  - path: dnn-providers/hip-kernel-provider/
+    queues: [hip-kernel-provider]
+  - path: dnn-providers/fusilli-provider/
+    queues: [fusilli-provider]
+  - path: dnn-providers/integration-tests/
+    queues: [integration-tests]
+  - path: dogfood/
+    queues: [dogfood-canary]
+"""
+    _seed_contents(
+        fake, path=".github/merge-queue/path_to_queues.yml",
+        ref="develop", payload=yaml_payload,
+    )
+
+    # Stub resolve_app_identity's bot_user_id lookup via users.get_by_username
+    from types import SimpleNamespace
+    users_mock_resp = SimpleNamespace(parsed_data=SimpleNamespace(id=999))
+    fake.rest.users.get_by_username = lambda *a, **kw: users_mock_resp  # type: ignore[attr-defined]
+
+    config = build_config_from_develop(fake, "owner", "repo")  # type: ignore[arg-type]
+
+    assert set(config.all_queues) == {
+        "hipdnn", "miopen-provider", "hipblaslt-provider",
+        "hip-kernel-provider", "fusilli-provider", "integration-tests",
+        "dogfood-canary",
+    }
+    assert len(config.path_to_queues) == 7
+    # Longest-prefix-first sort: dnn-providers/hip-kernel-provider/ (38 chars)
+    # comes before projects/hipdnn/ (17 chars).
+    path_strings = [p for p, _ in config.path_to_queues]
+    assert all(
+        len(path_strings[i]) >= len(path_strings[i + 1])
+        for i in range(len(path_strings) - 1)
+    ), f"path_to_queues not sorted longest-first: {path_strings}"
+    # App identity wired through
+    assert config.app_identity == AppIdentity(
+        slug="merge-clanker", app_id=3776213, bot_user_id=999
+    )
+
+
+def test_build_config_from_develop__rejects_non_mapping_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bare list / scalar / None payloads must raise ValueError loud."""
+    from rocm_mq.config import build_config_from_develop
+
+    monkeypatch.setenv("MQ_APP_SLUG", "merge-clanker")
+    monkeypatch.setenv("MQ_APP_ID", "3776213")
+
+    fake = FakeGitHub(FakeRepoState())
+    _seed_contents(
+        fake, path=".github/merge-queue/path_to_queues.yml",
+        ref="develop", payload="- just-a-list\n- not-a-mapping\n",
+    )
+    from types import SimpleNamespace
+    fake.rest.users.get_by_username = lambda *a, **kw: SimpleNamespace(  # type: ignore[attr-defined]
+        parsed_data=SimpleNamespace(id=1)
+    )
+
+    with pytest.raises(ValueError, match="not a mapping"):
+        build_config_from_develop(fake, "owner", "repo")  # type: ignore[arg-type]
+
+
+def test_build_config_from_develop__empty_queues_lists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing queues / paths sections produce empty tuples (not crashes)."""
+    from rocm_mq.config import build_config_from_develop
+
+    monkeypatch.setenv("MQ_APP_SLUG", "merge-clanker")
+    monkeypatch.setenv("MQ_APP_ID", "3776213")
+
+    fake = FakeGitHub(FakeRepoState())
+    _seed_contents(
+        fake, path=".github/merge-queue/path_to_queues.yml",
+        ref="develop", payload="# empty config\n{}\n",
+    )
+    from types import SimpleNamespace
+    fake.rest.users.get_by_username = lambda *a, **kw: SimpleNamespace(  # type: ignore[attr-defined]
+        parsed_data=SimpleNamespace(id=1)
+    )
+
+    config = build_config_from_develop(fake, "owner", "repo")  # type: ignore[arg-type]
+    assert config.all_queues == ()
+    assert config.path_to_queues == ()

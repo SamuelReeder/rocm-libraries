@@ -461,22 +461,33 @@ def run_process_cycle(args: argparse.Namespace) -> int:
 
         client = _GitHubClient(token=token)
 
-    # Resolve the App's canonical identity (slug + app_id + bot_user_id) BEFORE
-    # building the config. The decision layer's is_app_identity /
-    # is_app_identity_actor helpers compare numeric ids against the values
-    # carried on MergeQueueConfig.app_identity; sentinel zeros would reject
-    # every legitimate status/timeline event and classify every PR as
-    # Defer ("tampered"), so no PR would ever activate or squash in production
-    # (CR-01). Both --fake (FakeGitHub.rest.apps + .rest.users return the
-    # canonical sentinel) and real-token paths flow through here.
-    from rocm_mq.gh import resolve_app_identity
+    # Build the config.
+    #
+    # --fake mode: hardcoded canonical config (`hipdnn` only), matching the
+    # shape Phase 2 tests use. resolve_app_identity is called via the
+    # FakeGitHub's stubbed apps/users namespaces.
+    #
+    # Real-token mode: load path_to_queues.yml from develop via the Contents
+    # API and translate to MergeQueueConfig with all opted-in queues. This
+    # ships the Phase 4 YAML loader integration (03-wr-02 follow-up) — the
+    # processor now sees every queue the YAML lists, not just hipdnn.
+    # resolve_app_identity is called inside build_config_from_develop and
+    # takes the env-var-trust path (post-03-wr-01).
+    #
+    # Schema-graph validation (every queue named in a path entry must exist
+    # in queues:, upstream/downstream closure) remains Phase 4 territory
+    # (mq-config-validate.yml); this loader is non-validating beyond the
+    # "root is a mapping" sanity check.
+    config: MergeQueueConfig
+    if args.fake:
+        from rocm_mq.gh import resolve_app_identity
 
-    app_identity = resolve_app_identity(client)
+        app_identity = resolve_app_identity(client)
+        config = _build_default_config(app_identity=app_identity)
+    else:
+        from rocm_mq.config import build_config_from_develop
 
-    # Build the config. Phase 2: canonical hardcoded config; Phase 4 will
-    # load PATH_TO_QUEUES yaml and validate. For --fake runs this is the
-    # same config the tests use (canonical_merge_queue_config).
-    config = _build_default_config(app_identity=app_identity)
+        config = build_config_from_develop(client, owner, repo)
 
     # Cycle-scope `now` — the ONLY datetime.now(tz=UTC) call in rocm_mq.
     now = datetime.now(tz=UTC)

@@ -42,6 +42,7 @@ import yaml
 
 if TYPE_CHECKING:
     from rocm_mq.gh import GitHubClient
+    from rocm_mq.state import MergeQueueConfig
 
 
 # ---------------------------------------------------------------------------
@@ -138,3 +139,66 @@ def load_from_develop(client: GitHubClient, owner: str, repo: str) -> dict[str, 
     raw = base64.b64decode(resp.parsed_data.content).decode("utf-8")
     parsed: dict[str, Any] = yaml.safe_load(raw)
     return parsed
+
+
+# ---------------------------------------------------------------------------
+# build_config_from_develop — YAML → MergeQueueConfig bridge
+# ---------------------------------------------------------------------------
+#
+# Shared between cmd_process.run_process_cycle (processor) and
+# cmd_handle._load_config (handler). Extracted here so the two entry points
+# stay in lockstep on the YAML schema interpretation; a future schema change
+# (Phase 4 validator) ripples through one source.
+
+
+def build_config_from_develop(
+    client: GitHubClient, owner: str, repo: str
+) -> MergeQueueConfig:
+    """Load path_to_queues.yml from develop + resolve App identity →
+    MergeQueueConfig.
+
+    Three steps:
+      1. ``load_from_develop`` reads + parses the YAML (Contents API + safe_load).
+      2. Translate the YAML's ``queues:`` list into ``all_queues`` and the
+         ``paths:`` list-of-mappings into ``path_to_queues`` (longest-prefix-first
+         per ``pathmap.queues_for_paths`` contract).
+      3. ``resolve_app_identity(client)`` (env-var-trust path post-03-wr-01).
+
+    Returns a ``MergeQueueConfig`` ready for ``process_cycle`` / handler
+    consumption.
+
+    Raises:
+        ValueError: If the YAML root is not a mapping (bare list, scalar, None).
+            Schema-graph validation (every queue named in a paths entry must
+            exist in queues:, etc.) is Phase 4 territory.
+    """
+    # Late imports to keep config.py's import surface small and to avoid a
+    # PURE-09 violation (state.MergeQueueConfig is in the pure layer; we
+    # construct it here at the I/O boundary).
+    from rocm_mq.gh import resolve_app_identity
+    from rocm_mq.state import MergeQueueConfig
+
+    raw = load_from_develop(client, owner, repo)
+    if not isinstance(raw, dict):
+        msg = (
+            f"path_to_queues.yml at develop is not a mapping "
+            f"(got {type(raw).__name__})"
+        )
+        raise ValueError(msg)
+
+    queues = tuple(raw.get("queues", ()) or ())
+
+    path_entries: list[tuple[str, frozenset[str]]] = []
+    for entry in raw.get("paths", []) or []:
+        path = str(entry["path"])
+        path_queues = frozenset(entry.get("queues", ()) or ())
+        path_entries.append((path, path_queues))
+    # Longest-prefix-first per pathmap.queues_for_paths contract.
+    path_entries.sort(key=lambda pair: len(pair[0]), reverse=True)
+
+    app_identity = resolve_app_identity(client)
+    return MergeQueueConfig(
+        all_queues=queues,
+        path_to_queues=tuple(path_entries),
+        app_identity=app_identity,
+    )

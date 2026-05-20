@@ -75,7 +75,7 @@ from typing import TYPE_CHECKING, Any
 from githubkit.exception import RequestFailed
 
 from rocm_mq.comment import render_status_body
-from rocm_mq.config import SELF_BOOTSTRAP_PATHS, load_from_develop
+from rocm_mq.config import SELF_BOOTSTRAP_PATHS
 from rocm_mq.executor import _find_status_comment_id
 from rocm_mq.pathmap import queues_for_paths
 from rocm_mq.state import MergeQueueConfig, PRState, RenderContext
@@ -420,37 +420,14 @@ def _build_default_config(owner: str, repo: str) -> MergeQueueConfig:
 def _load_config(client: Any, owner: str, repo: str) -> MergeQueueConfig:
     """Load PATH_TO_QUEUES from develop + resolve the App identity.
 
-    Calls ``config.load_from_develop`` (plan 03-03 loader) for the raw YAML
-    payload, then assembles a ``MergeQueueConfig`` shaped for the handler's
-    needs (the handler only reads ``path_to_queues`` to derive the per-PR
-    queue set; ``all_queues`` is filled in for symmetry).
-
-    Tests monkeypatch this helper directly to inject a canned config and
-    avoid the Contents API round-trip.
+    Thin delegate to ``rocm_mq.config.build_config_from_develop`` so the
+    handler and processor share one source of truth for the YAML→config
+    translation. Tests monkeypatch this helper to inject a canned config
+    and avoid the Contents API round-trip.
     """
-    from rocm_mq.gh import resolve_app_identity
+    from rocm_mq.config import build_config_from_develop
 
-    raw = load_from_develop(client, owner, repo)
-    if not isinstance(raw, dict):
-        raise ValueError(
-            f"path_to_queues.yml at develop is not a mapping (got {type(raw).__name__})"
-        )
-    queues = tuple(raw.get("queues", ()))
-    # Translate the [{path, queues: [...]}, ...] list shape into the
-    # MergeQueueConfig tuple-of-tuples shape (path, frozenset[queue]).
-    path_entries: list[tuple[str, frozenset[str]]] = []
-    for entry in raw.get("paths", []) or []:
-        path = str(entry["path"])
-        path_queues = frozenset(entry.get("queues", ()) or ())
-        path_entries.append((path, path_queues))
-    # Longest-prefix-first per pathmap.queues_for_paths contract.
-    path_entries.sort(key=lambda pair: len(pair[0]), reverse=True)
-    app_identity = resolve_app_identity(client)
-    return MergeQueueConfig(
-        all_queues=queues,
-        path_to_queues=tuple(path_entries),
-        app_identity=app_identity,
-    )
+    return build_config_from_develop(client, owner, repo)
 
 
 # ---------------------------------------------------------------------------
