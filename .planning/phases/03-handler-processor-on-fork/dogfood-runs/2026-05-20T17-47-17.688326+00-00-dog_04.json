@@ -1,0 +1,66 @@
+{
+  "expected_outcome": {
+    "action": "Idempotent",
+    "no_duplicate_state": true
+  },
+  "notes": "Idempotency assertions: mq:queued count == 1, status-comment count == 1, eyes reactions on triggers == 2 (one per /merge).",
+  "observed_outcome": {
+    "action": "Idempotent",
+    "eyes_reactions_on_triggers": 0,
+    "mq_queued_count": 0,
+    "no_duplicate_state": false,
+    "status_comment_count": 0
+  },
+  "passed": false,
+  "pr_number": 29,
+  "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/29",
+  "processor_run_urls": [],
+  "run_ended_at": "2026-05-20T17:47:53.826566+00:00",
+  "run_started_at": "2026-05-20T17:47:17.688326+00:00",
+  "scenario_id": "dog_04",
+  "step_summary_excerpt": "",
+  "timeline": [
+    [
+      "2026-05-20T17:47:17.688326+00:00",
+      "pr_opened",
+      {
+        "pr_number": 29,
+        "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/29"
+      }
+    ],
+    [
+      "2026-05-20T17:47:17.688326+00:00",
+      "merge_command_posted",
+      {
+        "command": "/merge",
+        "comment_id": 4501040911,
+        "ordinal": 1
+      }
+    ],
+    [
+      "2026-05-20T17:47:17.688326+00:00",
+      "merge_command_posted",
+      {
+        "command": "/merge",
+        "comment_id": 4501041034,
+        "ordinal": 2
+      }
+    ],
+    [
+      "2026-05-20T17:47:53.826566+00:00",
+      "mq_queued_label_applied",
+      {
+        "count": 0,
+        "expected": 1
+      }
+    ],
+    [
+      "2026-05-20T17:47:53.826566+00:00",
+      "status_comment_upserted",
+      {
+        "count": 0,
+        "expected": 1
+      }
+    ]
+  ]
+}

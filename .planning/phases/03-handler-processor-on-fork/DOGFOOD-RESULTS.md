@@ -66,6 +66,11 @@ Driver module: `rocm_mq.dogfood.dog_07`. Invoke per CONTEXT.md D-04, then re-run
 <a id="dog-08"></a>
 ## DOG-08 — RFC §6 row: /merge on PR touching no opted-in path
 
-**Status:** not yet run
+**Status:** passed
 
-Driver module: `rocm_mq.dogfood.dog_08`. Invoke per CONTEXT.md D-04, then re-run the aggregator.
+- **Latest pass:** `2026-05-20T18:02:13.649503+00:00`
+- **PR:** [#30](https://github.com/SamuelReeder/rocm-libraries/pull/30)
+- **Expected outcome:** `{"action": "Reject", "level": "handler", "reason_substring": "no opted-in path"}`
+- **Observed outcome:** `{"action": "Reject", "level": "handler", "mq_label_count": 0, "reason_substring": "no opted-in path", "rejection_comment_found": true, "status_comment_count": 0}`
+- **Source JSON:** [`dogfood-runs/2026-05-20T18-01-20.568530+00-00-dog_08.json`](dogfood-runs/2026-05-20T18-01-20.568530+00-00-dog_08.json)
+- **Notes:** Handler-level rejection — no processor cycle expected. Assertions: zero mq:* labels, zero <!-- rocm-mq-status --> comments, ≥1 bot comment containing 'no opted-in'.

@@ -1,0 +1,57 @@
+{
+  "expected_outcome": {
+    "action": "Reject",
+    "level": "handler",
+    "reason_substring": "no opted-in path"
+  },
+  "notes": "Handler-level rejection \u2014 no processor cycle expected. Assertions: zero mq:* labels, zero <!-- rocm-mq-status --> comments, \u22651 bot comment containing 'no opted-in'.",
+  "observed_outcome": {
+    "action": "Reject",
+    "level": "handler",
+    "mq_label_count": 0,
+    "reason_substring": "no opted-in path",
+    "rejection_comment_found": true,
+    "status_comment_count": 0
+  },
+  "passed": true,
+  "pr_number": 30,
+  "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/30",
+  "processor_run_urls": [],
+  "run_ended_at": "2026-05-20T18:02:13.649503+00:00",
+  "run_started_at": "2026-05-20T18:01:20.568530+00:00",
+  "scenario_id": "dog_08",
+  "step_summary_excerpt": "",
+  "timeline": [
+    [
+      "2026-05-20T18:01:20.568530+00:00",
+      "pr_opened",
+      {
+        "pr_number": 30,
+        "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/30"
+      }
+    ],
+    [
+      "2026-05-20T18:01:20.568530+00:00",
+      "merge_command_posted",
+      {
+        "command": "/merge",
+        "comment_id": 4501162243
+      }
+    ],
+    [
+      "2026-05-20T18:02:13.649503+00:00",
+      "handler_rejection_comment_posted",
+      {
+        "reason_substring": "no opted-in path"
+      }
+    ],
+    [
+      "2026-05-20T18:02:13.649503+00:00",
+      "no_mq_labels_present",
+      {
+        "count": 0,
+        "expected": 0
+      }
+    ]
+  ]
+}
