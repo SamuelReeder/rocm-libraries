@@ -9,7 +9,7 @@ self_check: PASSED
 requirements_satisfied: [WF-09]
 ---
 
-# Plan 03-05 SUMMARY: Register `rocm-mq-fork` GitHub App + `mq-secrets` Environment on the fork
+# Plan 03-05 SUMMARY: Register `merge-clanker` GitHub App + `mq-secrets` Environment on the fork
 
 ## What Built
 
@@ -18,7 +18,9 @@ files committed — the artifact is live GitHub state, captured here for
 audit.
 
 **App identity (non-secret):**
-- App slug: `rocm-mq-fork`
+- App slug: `merge-clanker` (confirmed live 2026-05-20 via
+  `actions/create-github-app-token@v3` `app-slug` output during
+  workflow_dispatch run 26174977504; see 03-wr-01 closeout note below)
 - App ID: `3776213`
 - Client ID: `Iv23liGR5Vc6rFy8CRcz`
 - Permission set: RFC §4.9 minimum (Contents r/w, Pull Requests r/w,
@@ -26,6 +28,18 @@ audit.
 - Webhook: disabled
 - Installation scope: SamuelReeder personal account, only on
   `rocm-libraries`
+
+> **2026-05-20 correction:** This SUMMARY originally recorded the App
+> slug as `rocm-mq-fork` because that was the value PRE-CONFIRMed during
+> Task 1. The operator subsequently created the App under the name
+> `merge-clanker` instead (likely because `rocm-mq-fork` was globally
+> taken, or for a different reason — root cause not recorded).
+> The first live processor cycle on 2026-05-20 surfaced the discrepancy
+> via the action's JWT-attested `app-slug` output. The plan 03-wr-01 fix
+> (commit `da3b4dadd90`) makes the workflow trust the action's output
+> rather than the repo variable, so the discrepancy is functionally
+> harmless going forward — but this SUMMARY is corrected for audit
+> integrity.
 
 **Environment:**
 - Name: `mq-secrets` (repo: `SamuelReeder/rocm-libraries`)
@@ -36,7 +50,9 @@ audit.
 **Repository variables:**
 - `MQ_APP_CLIENT_ID` = `Iv23liGR5Vc6rFy8CRcz`
 - `MQ_APP_ID` = `3776213`
-- `MQ_APP_SLUG` = `rocm-mq-fork`
+- `MQ_APP_SLUG` = `rocm-mq-fork` (stale — now dead; workflow reads slug
+  from action output post-03-wr-01. Optional to update via repo
+  Settings → Variables → edit; not required for correctness.)
 
 ## Decisions
 
