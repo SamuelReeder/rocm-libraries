@@ -29,7 +29,6 @@ from rocm_mq.config import (
 )
 from tests.gh_fake import FakeGitHub, FakeRepoState
 
-
 # ---------------------------------------------------------------------------
 # SELF_BOOTSTRAP_PATHS — type, membership, future-slot documentation
 # ---------------------------------------------------------------------------

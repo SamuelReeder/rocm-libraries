@@ -24,6 +24,7 @@ dev = [
     "syrupy>=4",
     "ruff>=0.15.13",
     "mypy>=2.1.0",
+    "types-PyYAML>=6.0",
     "pytest-cov>=5",
     "pytest-xdist>=3.6",
 ]
