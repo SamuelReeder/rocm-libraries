@@ -19,7 +19,6 @@ Scenario contract (RFC §6):
 
 from __future__ import annotations
 
-import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,7 +28,6 @@ import pytest
 
 from rocm_mq.dogfood import dog_02
 from tests.gh_fake import FakeGitHub, FakePR, FakeRepoState
-
 
 # ---------------------------------------------------------------------------
 # Module-level constants — locked by plan 03-11 Task 2 behavior block.
