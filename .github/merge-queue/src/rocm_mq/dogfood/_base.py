@@ -182,6 +182,12 @@ def create_dogfood_pr(
         head=branch,
         base="develop",
         body=body,
+        # Same-repo dogfood PRs have maintainer_can_modify=False by default
+        # on creation, which trips the handler's maintainer-edits at-enqueue
+        # gate. Set explicitly so the dogfood drivers exercise the
+        # accepted-merge path. Real PRs (not dogfood) are expected to set
+        # this themselves; the gate stays meaningful for upstream traffic.
+        maintainer_can_modify=True,
     )
     pr = pr_resp.parsed_data
     return int(pr.number), str(pr.html_url)
