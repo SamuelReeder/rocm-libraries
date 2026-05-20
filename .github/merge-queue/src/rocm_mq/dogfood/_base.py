@@ -140,9 +140,14 @@ def create_dogfood_pr(
     short_hash = secrets.token_hex(4)
     branch = f"dogfood/{scenario_id}-{short_hash}"
 
-    # 1. Resolve develop tip.
+    # 1. Resolve develop tip. The githubkit GitRef pydantic model exposes
+    # the target commit as ``object_`` (trailing underscore — ``object`` is
+    # a Python builtin); accept either spelling so a fake that uses bare
+    # ``.object`` continues to work alongside the real client.
     ref_resp = client.rest.git.get_ref(owner, repo, "heads/develop")
-    develop_tip: str = ref_resp.parsed_data.object.sha
+    _ref_obj = ref_resp.parsed_data
+    _target = getattr(_ref_obj, "object_", None) or _ref_obj.object  # type: ignore[attr-defined]
+    develop_tip: str = _target.sha
 
     # 2. Create branch ref off the tip.
     client.rest.git.create_ref(
