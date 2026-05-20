@@ -25,7 +25,6 @@ from rocm_mq import cmd_handle
 from rocm_mq.state import AppIdentity, MergeQueueConfig
 from tests.gh_fake import FakeGitHub, FakePR, FakeRepoState
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
