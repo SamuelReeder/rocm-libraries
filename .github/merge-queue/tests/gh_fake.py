@@ -56,6 +56,12 @@ class FakePR:
     files: list[str] = field(default_factory=list)
     merged: bool = False
     merge_commit_sha: str | None = None
+    # Phase 3 plan 03-06 additions: cmd_handle needs author + maintainer-edits
+    # flag on pulls.get and review state on pulls.list_reviews.
+    user_login: str = "pr-author"
+    maintainer_can_modify: bool = True
+    reviews: list[dict[str, str]] = field(default_factory=list)
+    """List of review dicts {state: APPROVED|CHANGES_REQUESTED|COMMENTED, user_login: ...}."""
 
 
 @dataclass
@@ -75,6 +81,15 @@ class FakeRepoState:
     """SHA → commit metadata (parents, message) for post-squash readback."""
     next_status_seq: int = 0
     next_comment_id: int = 1000
+    # Phase 3 plan 03-06 additions for cmd_handle gates / perm check.
+    collaborators: dict[str, str] = field(default_factory=dict)
+    """Maps username → role_name (admin|maintain|write|triage|read|none)."""
+    combined_statuses: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Maps head_sha → {state: success|pending|failure, statuses: [{context, state}, ...]}."""
+    reactions_log: list[tuple[int, str]] = field(default_factory=list)
+    """Append-only (comment_id, reaction_content) tuples."""
+    comments_store: dict[int, dict[int, str]] = field(default_factory=dict)
+    """PR-number → {comment_id: body} of issue comments created via create_comment."""
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +229,38 @@ class _ReposNS:
             status_code=201,
             parsed_data=SimpleNamespace(sha=new_sha),
         )
+
+    def get_collaborator_permission_level(
+        self, owner: str, repo: str, username: str
+    ) -> SimpleNamespace:
+        """Phase 3 plan 03-06: live permission check.
+
+        Returns a response with ``parsed_data.role_name`` ∈
+        {admin|maintain|write|triage|read|none}. Unseeded usernames raise 404
+        — mirrors the real API behaviour for non-collaborators (cmd_handle
+        treats this as the PR-author special-case path; RFC §4.4).
+        """
+        role = self._state.collaborators.get(username)
+        if role is None:
+            raise _make_request_failed(404)
+        return _resp(SimpleNamespace(role_name=role, user=SimpleNamespace(login=username)))
+
+    def get_combined_status_for_ref(
+        self, owner: str, repo: str, ref: str
+    ) -> SimpleNamespace:
+        """Phase 3 plan 03-06: required-check gate input.
+
+        Returns a combined-status response: ``parsed_data.state`` aggregate
+        plus ``parsed_data.statuses`` list of per-context entries. Defaults
+        to ``state="success"`` with no statuses if the head SHA was never
+        seeded (interpreted as "no required checks failing on this SHA").
+        """
+        entry = self._state.combined_statuses.get(ref, {"state": "success", "statuses": []})
+        statuses = [
+            SimpleNamespace(context=s["context"], state=s["state"])
+            for s in entry.get("statuses", [])
+        ]
+        return _resp(SimpleNamespace(state=entry["state"], statuses=statuses, sha=ref))
 
     def get_commit(self, owner: str, repo: str, ref: str) -> SimpleNamespace:
         """Read a commit by SHA — used for post-squash parent verification."""
@@ -390,14 +437,28 @@ class _IssuesNS:
         owner: str,
         repo: str,
         issue_number: int,
+        *,
+        per_page: int | None = None,
+        page: int | None = None,
         **_: Any,
     ) -> SimpleNamespace:
-        # The fake does not model comment storage; tests that need to drive
-        # specific comment lists monkeypatch this method. Accepts arbitrary
-        # kwargs (per_page, page) so the executor's paginated _find_status_
-        # comment_id implementation (WR-03) drives through here without a
-        # signature mismatch.
-        return _resp([])
+        """Return stored comments (Phase 3 plan 03-06 needs this for marker scan).
+
+        Honours simple page-based pagination so executor._find_status_comment_id
+        (paginated per WR-03) drives through here without redirecting. Tests
+        that need bespoke comment lists can still monkeypatch this method.
+        """
+        stored = self._state.comments_store.get(issue_number, {})
+        # Stable order by comment_id (oldest-first; matches GitHub default).
+        items = [
+            SimpleNamespace(id=cid, body=body)
+            for cid, body in sorted(stored.items())
+        ]
+        if per_page is not None and page is not None:
+            start = (page - 1) * per_page
+            end = start + per_page
+            items = items[start:end]
+        return _resp(items)
 
     def create_comment(
         self,
@@ -410,6 +471,7 @@ class _IssuesNS:
     ) -> SimpleNamespace:
         comment_id = self._state.next_comment_id
         self._state.next_comment_id += 1
+        self._state.comments_store.setdefault(issue_number, {})[comment_id] = body
         return _resp(SimpleNamespace(id=comment_id, body=body))
 
     def update_comment(
@@ -421,6 +483,11 @@ class _IssuesNS:
         body: str = "",
         **_: Any,
     ) -> SimpleNamespace:
+        # Update the stored body wherever this comment id lives.
+        for pr_comments in self._state.comments_store.values():
+            if comment_id in pr_comments:
+                pr_comments[comment_id] = body
+                break
         return _resp(SimpleNamespace(id=comment_id, body=body))
 
     # -- helpers --
@@ -461,6 +528,8 @@ class _PullsNS:
                 number=pr.number,
                 head=SimpleNamespace(sha=pr.head_sha),
                 labels=[SimpleNamespace(name=n) for n in sorted(pr.labels)],
+                user=SimpleNamespace(login=pr.user_login),
+                maintainer_can_modify=pr.maintainer_can_modify,
             )
         )
 
@@ -471,6 +540,23 @@ class _PullsNS:
         if pr is None:
             raise _make_request_failed(404)
         return _resp([SimpleNamespace(filename=f) for f in pr.files])
+
+    def list_reviews(
+        self, owner: str, repo: str, pull_number: int, **_: Any
+    ) -> SimpleNamespace:
+        """Phase 3 plan 03-06: ≥1 approving review gate input."""
+        pr = self._state.prs.get(pull_number)
+        if pr is None:
+            raise _make_request_failed(404)
+        return _resp(
+            [
+                SimpleNamespace(
+                    state=r["state"],
+                    user=SimpleNamespace(login=r.get("user_login", "reviewer")),
+                )
+                for r in pr.reviews
+            ]
+        )
 
     def merge(
         self,
@@ -568,6 +654,31 @@ class _UsersNS:
         return _resp(SimpleNamespace(id=42, login=username))
 
 
+class _ReactionsNS:
+    """Phase 3 plan 03-06: eyes-reaction support on issue-comment trigger.
+
+    GitHub's real Reactions API returns 201 on first add and 200 on duplicate
+    (RESEARCH.md Area #7) — both are success. The fake mirrors that by
+    appending to ``state.reactions_log`` unconditionally and returning a
+    SimpleNamespace stand-in.
+    """
+
+    def __init__(self, state: FakeRepoState) -> None:
+        self._state = state
+
+    def create_for_issue_comment(
+        self,
+        owner: str,
+        repo: str,
+        comment_id: int,
+        *,
+        content: str = "eyes",
+        **_: Any,
+    ) -> SimpleNamespace:
+        self._state.reactions_log.append((comment_id, content))
+        return _resp(SimpleNamespace(id=len(self._state.reactions_log), content=content))
+
+
 class _RestNS:
     def __init__(self, state: FakeRepoState, creator_type: str) -> None:
         self.repos = _ReposNS(state, creator_type)
@@ -577,6 +688,7 @@ class _RestNS:
         self.checks = _ChecksNS(state)
         self.apps = _AppsNS()
         self.users = _UsersNS()
+        self.reactions = _ReactionsNS(state)
 
 
 # ---------------------------------------------------------------------------
