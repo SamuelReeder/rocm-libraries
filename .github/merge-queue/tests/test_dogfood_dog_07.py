@@ -259,19 +259,14 @@ class _DogfoodFake(FakeGitHub):
             raise RuntimeError(f"_dismiss_review: PR #{pull_number} not in state")
         prior = self._review_state.get(pull_number, {}).get(review_id)
         if prior is None:
-            raise RuntimeError(
-                f"_dismiss_review: no review #{review_id} on PR #{pull_number}"
-            )
+            raise RuntimeError(f"_dismiss_review: no review #{review_id} on PR #{pull_number}")
         self._review_state[pull_number][review_id] = "DISMISSED"
         # Mirror to FakePR.reviews — flip the FIRST APPROVED review by the
         # approver login. The fake's append-order matches the create-order,
         # so the review at index matching its position in _review_state is
         # the one we just dismissed.
         for r in pr.reviews:
-            if (
-                r.get("user_login") == _APPROVER_LOGIN
-                and r.get("state") == "APPROVED"
-            ):
+            if r.get("user_login") == _APPROVER_LOGIN and r.get("state") == "APPROVED":
                 r["state"] = "DISMISSED"
                 break
         return SimpleNamespace(
