@@ -1,0 +1,189 @@
+# NOTE: This file is in SELF_BOOTSTRAP_PATHS — /merge on PRs touching this
+# file requires manual maintainer merge (RFC §8). The Phase 3 handler
+# (rocm_mq.cmd_handle.is_self_bootstrap) rejects auto-enqueue when this
+# file (or anything else under .github/workflows/**) is in the diff.
+#
+# Phase 3 plan 03-07 delivery: event-driven command handler.
+#   - Command job:    issue_comment[created] -> /merge | /dequeue dispatch
+#                     into rocm_mq.cmd_handle.main (plan 03-06 module).
+#   - Audit job:      pull_request_target[labeled,...] -> Phase 4 no-op stub.
+#                     Permission scope (issues:write + statuses:write only,
+#                     NO pull-requests:write per RFC §4.3.1) is locked NOW
+#                     so Phase 4 fills in the audit body without rewiring.
+#
+# Token discipline (RFC §4.9):
+#   - App installation token (actions/create-github-app-token@v3, SHA-pinned)
+#     for every label / status / status-comment write.
+#   - GITHUB_TOKEN (issues: write) reserved for the :eyes: reaction on the
+#     trigger comment (plan 03-06 ack-UX default).
+#
+# Pitfall 1 (single highest-impact bug class): NO actions/checkout of any
+# PR-head SHA anywhere in this file (the well-known untrusted-fork-content
+# expression is intentionally NOT spelled out here so a literal grep for it
+# returns zero hits — both in this file and across the pull_request_target
+# workflow surface). Every checkout pins ref=refs/heads/develop with
+# persist-credentials:false and sparse-checkout: .github/merge-queue. CI
+# lint AUDIT-02 (Phase 4) enforces zero hits across all pull_request_target
+# workflows.
+
+name: mq-handler
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [labeled, unlabeled, opened, reopened, edited, converted_to_draft]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+# Workflow-level default deny-elevation (Pitfall 16). Each job re-declares the
+# scope it actually needs; any job that omits a permissions: block inherits
+# this read-only default rather than the repo-wide read/write default.
+permissions:
+  contents: read
+
+jobs:
+  command:
+    # Only run on issue_comment events; pull_request_target and
+    # pull_request_review events are handled by the audit job below.
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    # Environment scoping (plan 03-05): mq-secrets is restricted to develop
+    # ref via deployment-branches rule. issue_comment events resolve
+    # GITHUB_REF to the default branch (develop), so the secret resolves.
+    environment: mq-secrets
+
+    # Per-PR concurrency serialization (RFC §4.3.1, RESEARCH Area #7).
+    # cancel-in-progress: false means each /merge processes; at most one
+    # queued behind the in-flight one. The decision layer's idempotent
+    # short-circuit (cmd_handle: 'already-queued') makes overlap safe.
+    concurrency:
+      group: mq-handler-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
+
+    # Per-job permission scoping (RFC §4.9 token split):
+    #   contents: read       — sparse-checkout from develop
+    #   issues: write        — GITHUB_TOKEN-driven :eyes: reaction on trigger
+    #                          comment (the App token does every other write)
+    #   pull-requests: read  — pulls.list_files for self-bootstrap intersection
+    # The App token (minted below) carries the write permissions for labels,
+    # status comment, and merge-queue/active status; GITHUB_TOKEN is bounded.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+
+    steps:
+      # STEP 1: Pre-flight runs FIRST, BEFORE any App-token mint. If the
+      # fork's default branch is misconfigured we never want to even hold
+      # the App installation token (plan 03-04 threat T-03-04-01). Uses
+      # GITHUB_TOKEN (read-only contents: read) — NOT the App token.
+      # The preflight binary is shipped in the repo at HEAD of develop, so
+      # we need a transient checkout of just the merge-queue package first.
+      - name: Checkout merge-queue package from develop (pre-flight)
+        # SHA-pinned per RFC §8 self-bootstrap protection. Pitfall 1: ref
+        # MUST be refs/heads/develop — NEVER any PR-head SHA expression
+        # (no fork-content checkout in pull_request_target trust scope).
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.2.2
+        with:
+          ref: refs/heads/develop
+          persist-credentials: false
+          sparse-checkout: .github/merge-queue
+          sparse-checkout-cone-mode: true
+
+      - name: Set up Python 3.12
+        # SHA-pinned per RFC §8 self-bootstrap protection.
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: .github/merge-queue/pyproject.toml
+
+      - name: Install rocm_mq
+        working-directory: .github/merge-queue
+        run: pip install -e .
+
+      - name: Pre-flight (WF-10 default-branch + PATH_TO_QUEUES loadable)
+        working-directory: .github/merge-queue
+        env:
+          # Read-only GITHUB_TOKEN — pre-flight does no writes.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m rocm_mq preflight --repo ${{ github.repository }}
+
+      # STEP 2: Mint the App installation token AFTER pre-flight passes.
+      # actions/create-github-app-token@v3 (SHA-pinned per CLAUDE.md). The
+      # per-job permission-* inputs scope the App token DOWN from the App's
+      # full installation permissions to exactly what the command path
+      # writes (RFC §4.9 token split). The action's post-step revokes the
+      # token automatically.
+      - name: Mint App installation token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.MQ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MQ_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+          permission-statuses: write
+
+      # STEP 3: Handle the event. cmd_handle.main reads $GITHUB_EVENT_PATH,
+      # parses the comment body for /merge|/dequeue, runs the at-enqueue
+      # gates (live perm check, ≥1 approval, no failing required check,
+      # self-bootstrap intersection), and either labels + upserts the
+      # status comment OR posts a rejection comment.
+      - name: Handle event
+        working-directory: .github/merge-queue
+        env:
+          # Override GITHUB_TOKEN with the App-minted token so every
+          # cmd_handle write (labels, status comment, reactions) goes
+          # through the App identity (slug-pinned per RFC §4.3.1).
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: python -m rocm_mq handle --repo ${{ github.repository }} --event-path "$GITHUB_EVENT_PATH"
+
+  audit:
+    # Phase 3 STUB. Phase 4 (cmd_audit.py + AUDIT-* requirements) fills in
+    # the RFC §4.3.1 tamper-matrix logic here; the permission scope, env,
+    # and concurrency wiring are locked NOW so the Phase 4 plan does not
+    # have to rewire the trigger surface.
+    if: github.event_name == 'pull_request_target' || github.event_name == 'pull_request_review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    environment: mq-secrets
+
+    # Per-PR audit concurrency — distinct group from the command job so a
+    # /merge running concurrently with a label-change audit does not
+    # serialize against the command path.
+    concurrency:
+      group: mq-handler-audit-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+
+    # RFC §4.3.1 minimum: audit needs to CLEAR labels (issues: write) and
+    # OVERWRITE the merge-queue/active status (statuses: write). It MUST
+    # NOT carry pull-requests: write — auditing tamper events does not
+    # justify the ability to make arbitrary PR changes. Even though the
+    # Phase 3 body is a no-op echo, the scope is locked here so Phase 4
+    # inherits the correct minimum permission set.
+    permissions:
+      contents: read
+      issues: write
+      statuses: write
+
+    steps:
+      - name: Phase 4 will implement RFC §4.3.1 tamper-matrix audit here
+        # The stub echoes the event shape so workflow-run logs are
+        # informative during dogfood iteration. Phase 4 replaces this
+        # step with: (a) sparse-checkout from develop, (b) setup-python,
+        # (c) mint App token with permission-issues:write + permission-
+        # statuses:write ONLY, (d) python -m rocm_mq audit ...
+        run: |
+          echo "Phase 4 will implement RFC §4.3.1 tamper-matrix audit here."
+          echo "event:  ${{ github.event_name }} / ${{ github.event.action }}"
+          echo "label:  ${{ github.event.label.name || 'n/a' }}"
+          echo "actor:  ${{ github.event.sender.login || 'n/a' }}"
+          echo "pr:     #${{ github.event.pull_request.number || 'n/a' }}"
