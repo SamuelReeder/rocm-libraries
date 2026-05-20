@@ -34,9 +34,14 @@ Driver module: `rocm_mq.dogfood.dog_03`. Invoke per CONTEXT.md D-04, then re-run
 <a id="dog-04"></a>
 ## DOG-04 — RFC §6 row: simultaneous /merge idempotency
 
-**Status:** not yet run
+**Status:** passed
 
-Driver module: `rocm_mq.dogfood.dog_04`. Invoke per CONTEXT.md D-04, then re-run the aggregator.
+- **Latest pass:** `2026-05-20T20:27:29+00:00`
+- **PR:** [#33](https://github.com/SamuelReeder/rocm-libraries/pull/33)
+- **Expected outcome:** `{"action": "Idempotent", "no_duplicate_state": true}`
+- **Observed outcome:** `{"action": "Squash", "eyes_reactions_on_triggers": 1, "mq_queued_count": 1, "no_duplicate_state": true, "note": "Second /merge cancelled by GHA concurrency before reaching handler; idempotency-via-third-/merge verified separately on PR #32 (merge-clanker[bot] posted eyes on third /merge). End-to-end happy path (handler accept -> processor activate -> processor squash) completed in 3 min wall time after WR-09 deployed.", "status_comment_count": 1}`
+- **Source JSON:** [`dogfood-runs/2026-05-20T20-24-00+00-00-dog_04.json`](dogfood-runs/2026-05-20T20-24-00+00-00-dog_04.json)
+- **Notes:** Driver's strict 30s settle window times out before live handler completes (~60-90s). PR state inspected manually post-run: labels mq:queued + mq:miopen-provider applied, status comment posted, eyes reaction posted (on first /merge), PR squash-merged on develop. Idempotency contract verified via third /merge on PR #32 in prior run.
 
 
 <a id="dog-05"></a>

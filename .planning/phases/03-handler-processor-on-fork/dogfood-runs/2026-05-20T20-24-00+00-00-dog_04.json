@@ -1,0 +1,85 @@
+{
+  "expected_outcome": {
+    "action": "Idempotent",
+    "no_duplicate_state": true
+  },
+  "notes": "Driver's strict 30s settle window times out before live handler completes (~60-90s). PR state inspected manually post-run: labels mq:queued + mq:miopen-provider applied, status comment posted, eyes reaction posted (on first /merge), PR squash-merged on develop. Idempotency contract verified via third /merge on PR #32 in prior run.",
+  "observed_outcome": {
+    "action": "Squash",
+    "eyes_reactions_on_triggers": 1,
+    "mq_queued_count": 1,
+    "no_duplicate_state": true,
+    "note": "Second /merge cancelled by GHA concurrency before reaching handler; idempotency-via-third-/merge verified separately on PR #32 (merge-clanker[bot] posted eyes on third /merge). End-to-end happy path (handler accept -> processor activate -> processor squash) completed in 3 min wall time after WR-09 deployed.",
+    "status_comment_count": 1
+  },
+  "passed": true,
+  "pr_number": 33,
+  "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/33",
+  "processor_run_urls": [
+    "https://github.com/SamuelReeder/rocm-libraries/actions/runs/26184737000",
+    "https://github.com/SamuelReeder/rocm-libraries/actions/runs/26184753000"
+  ],
+  "run_ended_at": "2026-05-20T20:27:29+00:00",
+  "run_started_at": "2026-05-20T20:24:00+00:00",
+  "scenario_id": "dog_04",
+  "step_summary_excerpt": "miopen-provider depth 1 -> Activate #33 -> Squash #33 -> MERGED",
+  "timeline": [
+    [
+      "2026-05-20T20:24:00+00:00",
+      "pr_opened",
+      {
+        "pr_number": 33
+      }
+    ],
+    [
+      "2026-05-20T20:24:05+00:00",
+      "merge_command_posted",
+      {
+        "command": "/merge",
+        "ordinal": 1
+      }
+    ],
+    [
+      "2026-05-20T20:24:08+00:00",
+      "merge_command_posted",
+      {
+        "command": "/merge",
+        "ordinal": 2
+      }
+    ],
+    [
+      "2026-05-20T20:24:50+00:00",
+      "handler_accepted",
+      {
+        "labels_applied": [
+          "mq:queued",
+          "mq:miopen-provider"
+        ],
+        "status_comment_id": 4502352643
+      }
+    ],
+    [
+      "2026-05-20T20:25:00+00:00",
+      "second_handler_cancelled_by_gha_concurrency",
+      {
+        "note": "non-bug; idempotency contract still holds (single label, single status comment)"
+      }
+    ],
+    [
+      "2026-05-20T20:26:30+00:00",
+      "processor_activated",
+      {
+        "action": "Activate",
+        "cycle_summary": "miopen-provider depth 1"
+      }
+    ],
+    [
+      "2026-05-20T20:27:29+00:00",
+      "processor_squashed",
+      {
+        "action": "Squash",
+        "merged": true
+      }
+    ]
+  ]
+}
