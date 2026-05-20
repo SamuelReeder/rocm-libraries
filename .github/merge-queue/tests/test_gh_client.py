@@ -264,6 +264,93 @@ def test_resolve_app_identity__handles_alternate_slug() -> None:
     assert passed_username == "some-other-app[bot]"
 
 
+def test_resolve_app_identity__env_vars_skip_jwt_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With MQ_APP_SLUG + MQ_APP_ID set, resolve_app_identity MUST NOT call
+    apps.get_authenticated.
+
+    The runtime workflow passes an installation token (from
+    actions/create-github-app-token@v3), and /app requires App JWT auth —
+    so any apps.get_authenticated call from the runtime path fails 401.
+    The slug + app_id come from action-attested workflow env vars instead.
+    """
+    monkeypatch.setenv("MQ_APP_SLUG", "rocm-mq-fork")
+    monkeypatch.setenv("MQ_APP_ID", "3776213")
+
+    client, users_mock = _make_resolve_client(
+        integration_id=99999,  # would be returned if JWT call happened — must not be used
+        integration_slug="WRONG-SLUG",
+        bot_user_id=42,
+    )
+    # Replace the apps mock with one that raises if called (proves we don't reach it)
+    client._gh.rest.apps.get_authenticated.side_effect = AssertionError(  # type: ignore[attr-defined]
+        "apps.get_authenticated must not be called when MQ_APP_* env vars are set"
+    )
+
+    identity = resolve_app_identity(client)
+    assert identity == AppIdentity(slug="rocm-mq-fork", app_id=3776213, bot_user_id=42)
+
+    # bot_user_id still came from the live users.get_by_username call (works
+    # with installation token), and the username was derived from the env-var slug
+    call_args = users_mock.get_by_username.call_args
+    passed_username = call_args.args[0] if call_args.args else call_args.kwargs.get("username")
+    assert passed_username == "rocm-mq-fork[bot]"
+
+
+def test_resolve_app_identity__env_vars_absent_falls_back_to_jwt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without MQ_APP_SLUG / MQ_APP_ID set, resolve_app_identity falls back to
+    the live apps.get_authenticated() call (local-dev path where the client
+    holds an App JWT and the live call works).
+    """
+    monkeypatch.delenv("MQ_APP_SLUG", raising=False)
+    monkeypatch.delenv("MQ_APP_ID", raising=False)
+
+    client, _users_mock = _make_resolve_client(
+        integration_id=12345,
+        integration_slug="rocm-mq",
+        bot_user_id=99999,
+    )
+    identity = resolve_app_identity(client)
+    assert identity == AppIdentity(slug="rocm-mq", app_id=12345, bot_user_id=99999)
+
+
+def test_resolve_app_identity__env_var_only_one_set_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If only one of MQ_APP_SLUG / MQ_APP_ID is set, treat as misconfigured
+    and fall back to the JWT path. Half-trust is not trust."""
+    monkeypatch.setenv("MQ_APP_SLUG", "rocm-mq-fork")
+    monkeypatch.delenv("MQ_APP_ID", raising=False)
+
+    client, _users_mock = _make_resolve_client(
+        integration_id=12345,
+        integration_slug="rocm-mq",
+        bot_user_id=99999,
+    )
+    identity = resolve_app_identity(client)
+    # Should NOT use the env-var slug; the JWT call returned "rocm-mq"
+    assert identity.slug == "rocm-mq"
+    assert identity.app_id == 12345
+
+
+def test_resolve_app_identity__env_var_app_id_non_integer_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MQ_APP_ID must parse as int; non-integer is a misconfiguration that
+    must fail loud, not silently fall back."""
+    monkeypatch.setenv("MQ_APP_SLUG", "rocm-mq-fork")
+    monkeypatch.setenv("MQ_APP_ID", "not-a-number")
+
+    client, _users_mock = _make_resolve_client(
+        integration_id=12345,
+        integration_slug="rocm-mq",
+        bot_user_id=99999,
+    )
+    with pytest.raises(ValueError, match="MQ_APP_ID"):
+        resolve_app_identity(client)
+
+
 # ---------------------------------------------------------------------------
 # 4. CorruptSquashError
 # ---------------------------------------------------------------------------
