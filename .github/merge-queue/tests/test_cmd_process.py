@@ -398,6 +398,112 @@ def test_github_step_summary__written_on_success(
 
 
 # ---------------------------------------------------------------------------
+# 8b. cycle-summary.md file sink (RESEARCH.md Area #11 — artifact pattern)
+# ---------------------------------------------------------------------------
+
+
+def test_cycle_summary_file_sink__written_alongside_step_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """process_cycle writes the same content to BOTH sinks.
+
+    The cycle-summary.md sink is the source the dogfood driver workflows
+    download via actions/upload-artifact (RESEARCH.md Area #11). It must
+    receive the same rendered summary that lands in $GITHUB_STEP_SUMMARY.
+    """
+    from rocm_mq import cmd_process
+
+    step_summary_file = tmp_path / "step_summary.md"
+    cycle_summary_file = tmp_path / "cycle-summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(step_summary_file))
+    monkeypatch.setenv("MQ_CYCLE_SUMMARY_PATH", str(cycle_summary_file))
+
+    fake = _seed_activate_scenario()
+    cmd_process.process_cycle(
+        client=fake,
+        config=canonical_merge_queue_config(),
+        owner="SamuelReeder",
+        repo="rocm-libraries",
+        dry_run=False,
+        now=utc(2026, 5, 18, 10, 0),
+    )
+
+    assert cycle_summary_file.exists(), (
+        "MQ_CYCLE_SUMMARY_PATH file was not written"
+    )
+    step_content = step_summary_file.read_text()
+    cycle_content = cycle_summary_file.read_text()
+    # The file sink is an overwrite (each cycle stands alone) whereas
+    # $GITHUB_STEP_SUMMARY is appended; on a single-cycle run both should
+    # contain the same rendered summary string.
+    assert "Queue depth" in cycle_content
+    assert "Cycle duration" in cycle_content
+    # Same content visible in both sinks.
+    assert cycle_content.strip() == step_content.strip(), (
+        "cycle-summary.md content differs from $GITHUB_STEP_SUMMARY content; "
+        "both sinks must receive identical rendered summary"
+    )
+
+
+def test_cycle_summary_file_sink__written_when_step_summary_unset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """Local-dev: $GITHUB_STEP_SUMMARY unset — file sink still writes."""
+    from rocm_mq import cmd_process
+
+    cycle_summary_file = tmp_path / "cycle-summary.md"
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.setenv("MQ_CYCLE_SUMMARY_PATH", str(cycle_summary_file))
+
+    fake = _seed_activate_scenario()
+    cmd_process.process_cycle(
+        client=fake,
+        config=canonical_merge_queue_config(),
+        owner="SamuelReeder",
+        repo="rocm-libraries",
+        dry_run=False,
+        now=utc(2026, 5, 18, 10, 0),
+    )
+
+    assert cycle_summary_file.exists(), (
+        "cycle-summary.md must be written even when $GITHUB_STEP_SUMMARY is unset"
+    )
+    content = cycle_summary_file.read_text()
+    assert "Queue depth" in content
+    assert "Cycle duration" in content
+
+
+def test_cycle_summary_file_sink__creates_missing_parent_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """If MQ_CYCLE_SUMMARY_PATH parent does not exist, process_cycle creates it."""
+    from rocm_mq import cmd_process
+
+    # Parent dir does not yet exist — process_cycle must mkdir(parents=True).
+    cycle_summary_file = tmp_path / "nonexistent" / "subdir" / "cycle-summary.md"
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.setenv("MQ_CYCLE_SUMMARY_PATH", str(cycle_summary_file))
+
+    fake = _seed_activate_scenario()
+    # MUST NOT raise FileNotFoundError.
+    cmd_process.process_cycle(
+        client=fake,
+        config=canonical_merge_queue_config(),
+        owner="SamuelReeder",
+        repo="rocm-libraries",
+        dry_run=False,
+        now=utc(2026, 5, 18, 10, 0),
+    )
+
+    assert cycle_summary_file.exists(), (
+        "process_cycle must create missing parent dirs for the file sink"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 9. Bonus: --dry-run + --fake together still skips dispatch
 # ---------------------------------------------------------------------------
 
