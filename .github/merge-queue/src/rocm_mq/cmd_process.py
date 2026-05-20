@@ -51,10 +51,10 @@ Phase 3 argparse refactor (plan 03-01):
 with four subparsers (``process-cycle``, ``handle``, ``audit``,
 ``preflight``); each registers a per-subcommand ``set_defaults(func=run_*)``
 callable so ``main()`` reduces to ``args.func(args)`` wrapped in the
-existing traceback-printing try/except. ``handle`` and ``preflight`` are
-``NotImplementedError`` stubs in this plan — they are wired by plans 03-06
-(cmd_handle) and 03-04 (preflight) respectively. ``audit`` is a Phase 3
-no-op (the RFC §4.3.1 tamper-matrix logic lands in Phase 4).
+existing traceback-printing try/except. ``handle`` dispatches into
+``rocm_mq.cmd_handle.main`` (wired by plan 03-06). ``preflight`` dispatches
+into ``rocm_mq.preflight.main`` (wired by plan 03-04). ``audit`` is a
+Phase 3 no-op (the RFC §4.3.1 tamper-matrix logic lands in Phase 4).
 """
 
 from __future__ import annotations
@@ -483,17 +483,31 @@ def run_process_cycle(args: argparse.Namespace) -> int:
 
 
 def run_handle(args: argparse.Namespace) -> int:
-    """Stub — plan 03-06 wires ``rocm_mq.cmd_handle.main``.
+    """Dispatch the ``handle`` subcommand into ``rocm_mq.cmd_handle.main``.
 
-    Raises ``NotImplementedError`` so a CI invocation of this subcommand
-    before plan 03-06 ships fails loudly via the shared try/except in
-    ``main()`` rather than silently returning 0 (T-03-01-02 mitigation:
-    a stub that no-ops as success would let mq-handler.yml dispatch a
-    no-op masquerading as a handled command).
+    Plan 03-06 wired this through — the prior NotImplementedError stub
+    from plan 03-01 is replaced by a real delegation that re-serializes
+    the parsed ``--repo`` / ``--event-path`` flags so ``cmd_handle.main``
+    re-parses them. Re-parsing keeps both entrypoints
+    (``python -m rocm_mq handle ...`` and a direct
+    ``python -m rocm_mq.cmd_handle ...`` invocation if one is ever added)
+    independently usable with the same flag surface — mirrors the pattern
+    ``run_preflight`` uses for ``rocm_mq.preflight.main``.
+
+    Exit codes preserved verbatim from ``cmd_handle.main``:
+      - 0 — every "handled" outcome (successful enqueue, idempotent
+        short-circuit, every rejection path, every event-skip path).
+      - 1 — uncaught exception (traceback printed to stderr).
+      - 2 — usage error (malformed ``--repo`` or missing ``GITHUB_TOKEN``).
     """
-    raise NotImplementedError(
-        "rocm_mq handle: plan 03-06 wires cmd_handle.main "
-        f"(received --repo={args.repo!r} --event-path={args.event_path!r})"
+    # Deferred import (matches the ``run_preflight`` and ``_build_fake_client``
+    # pattern) — keeps cmd_process importable from contexts that never call
+    # the handler and avoids hard-wiring a runtime dependency the
+    # ``process-cycle`` subcommand does not need.
+    from rocm_mq.cmd_handle import main as _handle_main
+
+    return _handle_main(
+        [f"--repo={args.repo}", f"--event-path={args.event_path}"]
     )
 
 

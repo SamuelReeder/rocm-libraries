@@ -701,16 +701,68 @@ def test_main_audit_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
     assert "phase 4" in err.lower() or "no-op" in err.lower()
 
 
-def test_main_handle_stub_raises_not_implemented(
-    capsys: pytest.CaptureFixture[str],
+def test_main_handle_dispatches_to_module(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
 ) -> None:
-    """handle is a NotImplementedError stub until plan 03-06 wires cmd_handle."""
-    from rocm_mq import cmd_process
+    """handle subcommand dispatches into rocm_mq.cmd_handle.main (plan 03-06 wiring).
 
-    rc = cmd_process.main(["handle", "--repo", "x/y"])
-    assert rc != 0
-    err = capsys.readouterr().err
-    assert "NotImplementedError" in err
+    The NotImplementedError stub from plan 03-01 is replaced by a real
+    delegation to rocm_mq.cmd_handle.main. Pin both layers of behaviour:
+
+      1. cmd_process.run_handle calls cmd_handle.main with --repo and
+         --event-path re-serialized (cmd_handle re-parses so each CLI
+         stays independently usable).
+      2. The exit code cmd_handle.main returns is what cmd_process.main
+         returns (here 0, with an event payload that exercises the
+         non-PR-comment skip path so no real API calls are needed).
+    """
+    import json as _json
+
+    from rocm_mq import cmd_handle, cmd_process
+
+    monkeypatch.setenv("GITHUB_TOKEN", "ghs_dummy")
+
+    # Build a minimal "skipped" event payload (non-created action → handler
+    # returns 0 without ever building a client). This proves the dispatch
+    # path is plumbed without requiring a fake-client monkeypatch on
+    # cmd_handle (the tests in test_cmd_handle.py already cover the
+    # full-dispatch paths).
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        _json.dumps(
+            {
+                "action": "edited",  # → handler skip path, returns 0
+                "comment": {"id": 1, "body": "", "user": {"login": "u"}},
+                "issue": {"number": 7},
+                "repository": {"owner": {"login": "o"}, "name": "r"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Record the args cmd_handle.main is invoked with so we can assert the
+    # flag re-serialization shape.
+    recorded: list[list[str]] = []
+    real_handle_main = cmd_handle.main
+
+    def spy(argv: list[str] | None = None) -> int:
+        recorded.append(list(argv or []))
+        return real_handle_main(argv)
+
+    monkeypatch.setattr(cmd_handle, "main", spy)
+    # cmd_process.run_handle imports cmd_handle.main inside the function
+    # body — patch the module attribute so the spy is what gets imported.
+
+    rc = cmd_process.main(
+        ["handle", "--repo", "o/r", "--event-path", str(event_path)]
+    )
+    assert rc == 0
+    assert len(recorded) == 1
+    assert recorded[0] == [
+        "--repo=o/r",
+        f"--event-path={event_path}",
+    ]
 
 
 def test_main_preflight_dispatches_to_module(
