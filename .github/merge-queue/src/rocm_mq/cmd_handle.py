@@ -449,22 +449,34 @@ def _handle_merge(
     """End-to-end /merge dispatch. Returns 0 on success, non-zero on error.
 
     Step order is load-bearing per the plan's behavior block:
-      0. Read PR (need labels for idempotency + author for perm override).
-      1. Idempotency short-circuit (mq:queued / mq:active present → eyes
+      0. WF-12 eyes-reaction — posted FIRST, before any branching. Eyes
+         is the ack-receipt signal that the handler saw the comment; it
+         is independent of whether the /merge accepts or rejects.
+      1. Read PR (need labels for idempotency + author for perm override).
+      2. Idempotency short-circuit (mq:queued / mq:active present → eyes
          + comment upsert only; no labels, no perm check, no gates).
-      2. Self-bootstrap rejection (RFC §8) — runs BEFORE any state mutation.
-      3. Permission check (live API; PR-author override).
-      4. Queue derivation (pulls.list_files → pathmap.queues_for_paths).
-      5. At-enqueue gates (≥1 approval, no failing required check,
+      3. Self-bootstrap rejection (RFC §8) — runs BEFORE any state mutation.
+      4. Permission check (live API; PR-author override).
+      5. Queue derivation (pulls.list_files → pathmap.queues_for_paths).
+      6. At-enqueue gates (≥1 approval, no failing required check,
          maintainer-edits, queue set non-empty).
-      6. Label apply + status-comment upsert + eyes-reaction.
+      7. Label apply + status-comment upsert.
     """
+    # Step 0 (WF-12): eyes-reaction posted on EVERY received /merge,
+    # regardless of accept/reject outcome. Posted FIRST so every downstream
+    # rejection branch implicitly carries the ack. The reactions API is
+    # idempotent (200 on duplicate, 201 on first) so a second /merge that
+    # falls into the idempotency short-circuit below still re-acks safely.
+    # Live DOG-04 run 2026-05-20 surfaced the missing-eyes-on-rejection bug
+    # (03-wr-05 closes it).
+    _post_eyes_reaction(client, owner, repo, comment_id)
+
     pr_resp = client.rest.pulls.get(owner, repo, pr_number)
     pr = pr_resp.parsed_data
     pr_author_login = str(getattr(getattr(pr, "user", None), "login", ""))
     current_labels = {str(getattr(lbl, "name", "")) for lbl in getattr(pr, "labels", [])}
 
-    # Step 1: idempotency short-circuit (WF-03).
+    # Step 2: idempotency short-circuit (WF-03). Eyes already posted above.
     if _LABEL_QUEUED in current_labels or _LABEL_ACTIVE in current_labels:
         # Re-derive queues for the comment upsert; this is cheap and lets the
         # second /merge refresh the status comment if anything has drifted.
@@ -482,7 +494,6 @@ def _handle_merge(
             author_login=pr_author_login,
             now=now,
         )
-        _post_eyes_reaction(client, owner, repo, comment_id)
         return 0
 
     # Step 2: self-bootstrap rejection (DOG-08 / RFC §8). NO state mutation
@@ -551,7 +562,8 @@ def _handle_merge(
         _post_comment(client, owner, repo, pr_number, body)
         return 0
 
-    # Step 6: success — label apply, status comment, eyes-reaction.
+    # Step 7: success — label apply, status comment. Eyes already posted
+    # at Step 0 (WF-12 ack-receipt) so we don't double-post here.
     _apply_labels(client, owner, repo, pr_number, queues)
     _upsert_status_comment(
         client,
@@ -564,7 +576,6 @@ def _handle_merge(
         author_login=pr_author_login,
         now=now,
     )
-    _post_eyes_reaction(client, owner, repo, comment_id)
     return 0
 
 

@@ -533,6 +533,102 @@ class TestMainDog08UnmappedPath:
         )
         assert rc == 0
         assert "mq:queued" not in fake_state.prs[7].labels
+
+
+# ---------------------------------------------------------------------------
+# WF-12: eyes-reaction posted on EVERY received /merge — including rejections
+# (live DOG-04 run 2026-05-20 surfaced this gap; commit 03-wr-05 closes)
+# ---------------------------------------------------------------------------
+
+
+class TestWf12EyesOnEveryMerge:
+    """WF-12: handler posts eyes reaction on every received /merge, regardless
+    of accept/reject outcome. RFC §4.3 wording — eyes is an ack the handler
+    saw the comment, not a 'we'll proceed' signal."""
+
+    def test_eyes_posted_on_self_bootstrap_rejection(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: FakeGitHub,
+        fake_state: FakeRepoState,
+        hipdnn_config: MergeQueueConfig,
+    ) -> None:
+        _seed_pr(fake_state, files=[".github/workflows/foo.yml"])
+        fake_state.collaborators["alice"] = "write"
+        payload = _make_event_payload()
+        _run_main(tmp_path, monkeypatch, payload=payload,
+                  fake_client=fake_client, config=hipdnn_config)
+        assert (4242, "eyes") in fake_state.reactions_log
+
+    def test_eyes_posted_on_no_opted_in_path_rejection(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: FakeGitHub,
+        fake_state: FakeRepoState,
+        hipdnn_config: MergeQueueConfig,
+    ) -> None:
+        _seed_pr(fake_state, files=["docs/readme.md"])
+        fake_state.collaborators["alice"] = "write"
+        payload = _make_event_payload()
+        _run_main(tmp_path, monkeypatch, payload=payload,
+                  fake_client=fake_client, config=hipdnn_config)
+        assert (4242, "eyes") in fake_state.reactions_log
+
+    def test_eyes_posted_on_perm_rejection(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: FakeGitHub,
+        fake_state: FakeRepoState,
+        hipdnn_config: MergeQueueConfig,
+    ) -> None:
+        # Author is "carol"; commenter alice has no role; no override.
+        _seed_pr(fake_state, files=["projects/hipdnn/x.cpp"],
+                 user_login="carol")
+        fake_state.collaborators["alice"] = "none"
+        payload = _make_event_payload()
+        _run_main(tmp_path, monkeypatch, payload=payload,
+                  fake_client=fake_client, config=hipdnn_config)
+        assert (4242, "eyes") in fake_state.reactions_log
+
+    def test_eyes_posted_on_gate_failure_rejection(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: FakeGitHub,
+        fake_state: FakeRepoState,
+        hipdnn_config: MergeQueueConfig,
+    ) -> None:
+        # PR with no approval -> at-enqueue gate fails.
+        _seed_pr(fake_state, files=["projects/hipdnn/x.cpp"], reviews=[])
+        fake_state.collaborators["alice"] = "write"
+        payload = _make_event_payload()
+        _run_main(tmp_path, monkeypatch, payload=payload,
+                  fake_client=fake_client, config=hipdnn_config)
+        assert (4242, "eyes") in fake_state.reactions_log
+
+    def test_eyes_posted_exactly_once_on_success(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: FakeGitHub,
+        fake_state: FakeRepoState,
+        hipdnn_config: MergeQueueConfig,
+    ) -> None:
+        """Don't double-post eyes on successful enqueue (top-of-handler
+        post must NOT compound with the existing success-path post)."""
+        _seed_pr(fake_state, files=["projects/hipdnn/x.cpp"])
+        fake_state.collaborators["alice"] = "write"
+        payload = _make_event_payload()
+        _run_main(tmp_path, monkeypatch, payload=payload,
+                  fake_client=fake_client, config=hipdnn_config)
+        eyes = [r for r in fake_state.reactions_log if r == (4242, "eyes")]
+        assert len(eyes) == 1, (
+            f"Expected exactly 1 eyes reaction; got {len(eyes)}: "
+            f"{fake_state.reactions_log}"
+        )
         comments = fake_state.comments_store.get(7, {})
         bodies = list(comments.values())
         # DOG-08 rejection cites no opted-in queue
