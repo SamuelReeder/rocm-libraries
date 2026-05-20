@@ -514,16 +514,29 @@ def run_audit(args: argparse.Namespace) -> int:
 
 
 def run_preflight(args: argparse.Namespace) -> int:
-    """Stub — plan 03-04 wires the real workflow pre-flight check.
+    """Dispatch into ``rocm_mq.preflight.main`` (wired by plan 03-04).
 
-    Raises ``NotImplementedError`` so a CI invocation of this subcommand
-    before plan 03-04 ships fails loudly (T-03-01-02 mitigation; same
-    rationale as run_handle).
+    Re-serializes the parsed ``--repo`` flag and hands off to
+    ``preflight.main``. The pre-flight CLI re-parses argv so the two
+    entrypoints (``python -m rocm_mq preflight`` and the workflow's
+    ``python -m rocm_mq.preflight`` invocation when called directly)
+    stay independently usable with the same flag surface.
+
+    Exit codes preserved verbatim from ``preflight.main``:
+      - 0 — all checks pass
+      - 1 — Check 1 (default-branch) or Check 3 (path_to_queues loadable)
+        failed
+      - 2 — usage error (missing/malformed ``--repo`` or missing
+        ``GITHUB_TOKEN``)
     """
-    raise NotImplementedError(
-        "rocm_mq preflight: plan 03-04 wires preflight.main "
-        f"(received --repo={args.repo!r})"
-    )
+    # Import here (not at module top) to avoid an import cycle should
+    # rocm_mq.preflight ever grow a dependency on cmd_process; the
+    # current code shape has no cycle, but the deferred import is a cheap
+    # invariant guard and matches the pattern cmd_process uses for the
+    # tests.gh_fake import in _build_fake_client.
+    from rocm_mq.preflight import main as _preflight_main
+
+    return _preflight_main([f"--repo={args.repo}"])
 
 
 def main(argv: list[str] | None = None) -> int:

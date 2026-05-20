@@ -742,9 +742,8 @@ def test_main_preflight_dispatches_to_module(
     def fake_get_content(
         owner: str, repo: str, path: str, *, ref: str = "", **_: object
     ) -> Any:
-        from types import SimpleNamespace
-
         import base64 as _b64
+        from types import SimpleNamespace
 
         return SimpleNamespace(
             parsed_data=SimpleNamespace(
