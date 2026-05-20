@@ -271,9 +271,7 @@ class _GitNS:
             )
         )
 
-    def create_ref(
-        self, owner: str, repo: str, *, ref: str, sha: str, **_: Any
-    ) -> SimpleNamespace:
+    def create_ref(self, owner: str, repo: str, *, ref: str, sha: str, **_: Any) -> SimpleNamespace:
         # ref comes in as "refs/heads/<branch>"; store the short form.
         short = ref[len("refs/") :] if ref.startswith("refs/") else ref
         self._refs[short] = sha
@@ -297,9 +295,7 @@ class _ActionsNS:
         return SimpleNamespace(
             parsed_data=SimpleNamespace(
                 total_count=len(self._artifacts),
-                artifacts=[
-                    SimpleNamespace(id=a["id"], name=a["name"]) for a in self._artifacts
-                ],
+                artifacts=[SimpleNamespace(id=a["id"], name=a["name"]) for a in self._artifacts],
             )
         )
 
@@ -342,14 +338,14 @@ def test_create_dogfood_pr_branch_naming(fake_client: _DogfoodFake) -> None:
     assert pr_number == 1000
     assert pr_url.startswith("https://github.test/owner/repo/pull/")
     # Verify a branch named dogfood/<scenario>-<8-hex> was created.
-    branches = [b for b in fake_client._refs.keys() if b.startswith("heads/dogfood/")]
+    branches = [b for b in fake_client._refs if b.startswith("heads/dogfood/")]
     assert len(branches) == 1
     branch_short = branches[0][len("heads/") :]
     assert _BRANCH_RE.match(branch_short), f"branch {branch_short!r} fails regex"
 
 
 def test_create_dogfood_pr_end_to_end(fake_client: _DogfoodFake) -> None:
-    pr_number, pr_url = create_dogfood_pr(
+    pr_number, _pr_url = create_dogfood_pr(
         fake_client,
         "owner",
         "repo",
@@ -411,9 +407,7 @@ def test_post_command_default_cmd_is_merge(fake_client: _DogfoodFake) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_poll_pr_state_success(
-    fake_client: _DogfoodFake, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_poll_pr_state_success(fake_client: _DogfoodFake, monkeypatch: pytest.MonkeyPatch) -> None:
     """Predicate truthy on first call → its return value is passed through."""
     monkeypatch.setattr("rocm_mq.dogfood._base.time.sleep", lambda _s: None)
 
@@ -458,9 +452,7 @@ def test_poll_pr_state_eventual_success(
     assert calls["n"] == 3
 
 
-def test_poll_pr_state_timeout(
-    fake_client: _DogfoodFake, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_poll_pr_state_timeout(fake_client: _DogfoodFake, monkeypatch: pytest.MonkeyPatch) -> None:
     """Predicate always falsy → TimeoutError raised after timeout_s elapses.
 
     Fake the monotonic clock so the test runs in microseconds rather than
@@ -507,9 +499,7 @@ def test_download_cycle_summary_graceful_on_no_matching_artifact(
     fake_state: FakeRepoState,
 ) -> None:
     """Artifacts exist but none start with 'cycle-summary-' → empty string."""
-    client = _DogfoodFake(
-        fake_state, artifacts=[{"id": 1, "name": "other-artifact-7"}]
-    )
+    client = _DogfoodFake(fake_state, artifacts=[{"id": 1, "name": "other-artifact-7"}])
     result = download_cycle_summary_artifact(client, "owner", "repo", run_id=123)
     assert result == ""
 
