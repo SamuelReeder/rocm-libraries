@@ -304,6 +304,11 @@ class TestAtEnqueueGates:
         )
         assert fails == []
 
+    @pytest.mark.skip(
+        reason="DOGFOOD-ONLY: no-approval gate disabled in cmd_handle for "
+        "fork dogfood (single-collaborator). Re-enable + un-skip before "
+        "upstream porting (Phase 5 PORT-02 pre-flight)."
+    )
     def test_fails_on_no_approval(
         self, fake_client: FakeGitHub, fake_state: FakeRepoState
     ) -> None:
@@ -718,6 +723,11 @@ class TestMainPermRejection:
 
 
 class TestMainGateFailures:
+    @pytest.mark.skip(
+        reason="DOGFOOD-ONLY: no-approval gate disabled in cmd_handle for "
+        "fork dogfood. Re-enable + un-skip before upstream porting "
+        "(Phase 5 PORT-02 pre-flight)."
+    )
     def test_no_approval_emits_single_rejection_comment(
         self,
         tmp_path: Path,
