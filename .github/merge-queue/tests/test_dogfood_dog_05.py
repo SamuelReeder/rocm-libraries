@@ -141,9 +141,7 @@ class _DogfoodFake(FakeGitHub):
         branch: str = "",
         **_: Any,
     ) -> SimpleNamespace:
-        self._created_files.append(
-            {"path": path, "branch": branch, "message": message}
-        )
+        self._created_files.append({"path": path, "branch": branch, "message": message})
         # Count commits per branch; the SECOND commit to a PR-owned branch
         # is the simulated author-push event.
         prior = self._branch_commit_count.get(branch, 0)
@@ -156,11 +154,7 @@ class _DogfoodFake(FakeGitHub):
                 # a head SHA that does NOT carry the merge-queue/active status.
                 pr.head_sha = f"head_{pr_number}_after_author_push"
         commit_sha = f"commit_{len(self._created_files)}"
-        return SimpleNamespace(
-            parsed_data=SimpleNamespace(
-                commit=SimpleNamespace(sha=commit_sha)
-            )
-        )
+        return SimpleNamespace(parsed_data=SimpleNamespace(commit=SimpleNamespace(sha=commit_sha)))
 
     # -- PR creation (seeds mq:queued label) ---------------------------------
 
@@ -182,9 +176,7 @@ class _DogfoodFake(FakeGitHub):
         # ``mq:queued`` label is added on ``/merge`` below; ``mq:active`` is
         # added on the same /merge call by the auto-activate path so the
         # driver's polling-for-active step observes it deterministically.
-        self.state.prs[number] = FakePR(
-            number=number, head_sha=f"head_{number}_at_activation"
-        )
+        self.state.prs[number] = FakePR(number=number, head_sha=f"head_{number}_at_activation")
         self._branch_to_pr[head] = number
         return SimpleNamespace(
             parsed_data=SimpleNamespace(
@@ -234,9 +226,7 @@ class _DogfoodFake(FakeGitHub):
             return
         if "after_author_push" not in pr.head_sha:
             return
-        self._base_create_comment(
-            "owner", "repo", pr_number, body=self._eject_comment_body
-        )
+        self._base_create_comment("owner", "repo", pr_number, body=self._eject_comment_body)
         self._comment_posted = True
 
 
@@ -247,14 +237,10 @@ class _GitNS:
     def get_ref(self, owner: str, repo: str, ref: str) -> SimpleNamespace:
         sha = self._refs.get(ref, "develop_initial_tip")
         return SimpleNamespace(
-            parsed_data=SimpleNamespace(
-                ref=f"refs/{ref}", object=SimpleNamespace(sha=sha)
-            )
+            parsed_data=SimpleNamespace(ref=f"refs/{ref}", object=SimpleNamespace(sha=sha))
         )
 
-    def create_ref(
-        self, owner: str, repo: str, *, ref: str, sha: str, **_: Any
-    ) -> SimpleNamespace:
+    def create_ref(self, owner: str, repo: str, *, ref: str, sha: str, **_: Any) -> SimpleNamespace:
         short = ref[len("refs/") :] if ref.startswith("refs/") else ref
         self._refs[short] = sha
         return SimpleNamespace(
@@ -431,9 +417,7 @@ def test_run_scenario_failure_mode_when_reason_mismatches(
     _patch_timing(monkeypatch)
     # An eject comment naming the WRONG reason — must keep polling and
     # eventually time out.
-    eject_body = (
-        "<!-- rocm-mq-status -->\n## Ejected: merge conflict with develop\n"
-    )
+    eject_body = "<!-- rocm-mq-status -->\n## Ejected: merge conflict with develop\n"
     client = _DogfoodFake(fake_state, eject_comment_body=eject_body)
 
     with pytest.raises(TimeoutError):
@@ -508,9 +492,7 @@ def test_run_scenario_timeline_records_author_push_event(
     assert "mq_active_label_applied" in event_types
     # And the terminal ejected event records the documented reason.
     assert "ejected" in event_types
-    push_evt = next(
-        s for (_ts, evt, s) in result.timeline if evt == "author_push_after_activation"
-    )
+    push_evt = next(s for (_ts, evt, s) in result.timeline if evt == "author_push_after_activation")
     # The recorded event must carry the post-push head SHA so the audit
     # trail in the per-run JSON shows the SHA the processor rejected.
     assert "after_author_push" in json.dumps(push_evt)
