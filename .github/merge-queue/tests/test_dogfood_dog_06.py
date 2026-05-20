@@ -638,7 +638,6 @@ def test_failure_mode_tree_diff_status_missing_flips_passed_false(
     silent-corruption detection (Apr-2026 regression class, CONTEXT.md D-05).
     """
     _patch_timing(monkeypatch)
-    client = _DogfoodFake(fake_state)
 
     # Subclass to corrupt PR_A's squash comment + artifact.
     class _CorruptedFake(_DogfoodFake):
@@ -689,7 +688,6 @@ def test_failure_mode_tree_diff_status_missing_flips_passed_false(
 
     corrupted_client = _CorruptedFake(fake_state)
     # Wire the artifact stub to omit tree_diff_status for PR_A's run_id.
-    pr_a_run_id_marker = "9000"  # synthetic — actual value will be 9000 + pr_number
 
     class _CorruptActionsNS(_ActionsNS):
         def download_artifact(
