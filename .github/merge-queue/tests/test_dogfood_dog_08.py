@@ -63,8 +63,9 @@ def test_pr_file_path_is_not_in_path_to_queues() -> None:
         else ".github/merge-queue/path_to_queues.yml"
     )
     if not yml.exists():
-        # Repo-root invocation — try the absolute layout.
-        yml = Path("/home/AMD/sareeder/worktrees/rocmlibs-merge-queue-rfc/.github/merge-queue/path_to_queues.yml")
+        # Repo-root invocation — derive from repo root if cwd is elsewhere.
+        repo_root = Path(__file__).resolve().parents[3]
+        yml = repo_root / ".github/merge-queue/path_to_queues.yml"
     if not yml.exists():
         pytest.skip("path_to_queues.yml not present at any expected path")
     import yaml
