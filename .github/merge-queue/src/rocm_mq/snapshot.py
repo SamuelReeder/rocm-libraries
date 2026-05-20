@@ -22,11 +22,13 @@ Internal helpers (exposed for unit tests):
   ("github-actions[bot]") and User-type creators get ``None`` app fields.
   This is RESEARCH.md Critical Discovery 1 — the API does not return App ID
   on commit-status creators; we infer it from the login pattern + config.
-- ``_map_check_run_state(status, conclusion) -> str`` — translates the
-  (status, conclusion) tuple from the Checks API into the literal expected by
-  the pure decision layer (``"pending" | "success" | "failure" | "error" | "neutral"``).
-- ``_make_raw_pr_state(pr, statuses, timeline, checks, files, config) -> RawPRState``
+- ``_make_raw_pr_state(pr, statuses, timeline, files, config) -> RawPRState``
   — pure assembly helper; no I/O.
+
+Per 03-wr-09: required-check evaluation is delegated to GitHub branch
+protection. ``snapshot.py`` no longer fetches check runs or maps them
+to pure-layer states — the executor parses the merge-API 405/422
+response to translate protection-blocked merges into Eject actions.
 
 Behaviour notes:
 - ``pulls.list_files`` is SKIPPED when the PR already carries any ``mq:<queue>``
@@ -36,9 +38,11 @@ Behaviour notes:
   ``derive_pr`` must not depend on path-based queue assignment for already-labelled
   PRs (this matches the canonical RFC §4.2 contract — labels are the source of
   truth once applied).
-- BOTH ``checks.list_for_ref`` and ``repos.list_commit_statuses_for_ref`` are
-  read into ``required_check_results`` (OQ-4 resolution). This covers GHA-driven
-  check runs AND external CI driving via the older commit-status API.
+- ``repos.list_commit_statuses_for_ref`` is still read into ``head_statuses``
+  (for the activation status creator filter and the post-squash idempotency
+  short-circuit). Per 03-wr-09 the read is no longer cross-loaded into
+  ``required_check_results`` — the activation marker is the only commit
+  status the decision layer reads.
 - ``incomplete_results=True`` on any search response aborts the cycle with an
   ``AssertionError`` (T-02-02-02). The stateless processor (RFC §4.6) retries on
   the next 3-min cron tick.
@@ -60,7 +64,6 @@ from rocm_mq.state import (
     MergeQueueConfig,
     RawPRState,
     RawSnapshot,
-    RequiredCheckResult,
     TimelineActor,
 )
 
@@ -75,38 +78,6 @@ if TYPE_CHECKING:
 # so the I/O-layer lint (test_io_modules_do_import_githubkit) passes. We use
 # the exception type for narrow except clauses in the search guard below.
 import githubkit.exception as _ghkit_exc  # noqa: F401  (PURE-09 positive marker)
-
-# ---------------------------------------------------------------------------
-# Mapping tables
-# ---------------------------------------------------------------------------
-
-# Conclusion → pure-layer state mapping (UK-7).
-_CONCLUSION_TO_STATE: dict[str, str] = {
-    "success": "success",
-    "failure": "failure",
-    "timed_out": "failure",
-    "action_required": "failure",
-    "cancelled": "failure",
-    "neutral": "neutral",
-    "skipped": "neutral",
-}
-
-
-def _map_check_run_state(status: str, conclusion: str | None) -> str:
-    """Map a CheckRun ``(status, conclusion)`` pair to the pure-layer state literal.
-
-    Rules (RESEARCH.md UK-7):
-    - status != "completed" → "pending" (the check has not finished).
-    - status == "completed" + known conclusion → mapped per ``_CONCLUSION_TO_STATE``.
-    - status == "completed" + unknown/None conclusion → "error" (anomalous; we fail
-      closed so the decision layer treats the check as not-passing).
-    """
-    if status != "completed":
-        return "pending"
-    if conclusion is None:
-        return "error"
-    return _CONCLUSION_TO_STATE.get(conclusion, "error")
-
 
 # ---------------------------------------------------------------------------
 # Creator bridging (Critical Discovery 1)
@@ -174,7 +145,6 @@ def _make_raw_pr_state(
     pr: Any,
     statuses: list[Any],
     timeline: list[Any],
-    checks: list[Any],
     files: list[Any] | list[str],
     config: MergeQueueConfig,
 ) -> RawPRState:
@@ -218,30 +188,10 @@ def _make_raw_pr_state(
             )
         )
 
-    # required_check_results: OQ-4 — combine check runs AND commit statuses.
-    # Status-API entries become checks named by their context; we use the same
-    # state mapping where possible (success/failure/pending/error).
-    check_results: list[RequiredCheckResult] = []
-    for cr in checks:
-        check_results.append(
-            RequiredCheckResult(
-                name=str(cr.name),
-                state=_map_check_run_state(
-                    str(cr.status), getattr(cr, "conclusion", None)
-                ),
-            )
-        )
-    # Statuses → checks (one entry per context; status's state literal is
-    # already in the pure-layer vocabulary: pending/success/failure/error).
-    for s in statuses:
-        # Skip the activation status itself — it is a control plane signal, not
-        # a CI check that the decision layer evaluates for pass/fail. The
-        # activation filter is applied separately in derive_pr.
-        if str(s.context) == config.activation_status_context:
-            continue
-        check_results.append(
-            RequiredCheckResult(name=str(s.context), state=str(s.state))
-        )
+    # Per 03-wr-09: required-check evaluation is delegated to GitHub branch
+    # protection. The queue no longer loads check runs or maps them into
+    # required_check_results — the executor parses the merge API's 405/422
+    # response to decide eject-vs-retry on protection-blocked merges.
 
     # changed_paths: tuple of file names (may be empty when list_files skipped)
     if files and not isinstance(files[0], str):
@@ -255,7 +205,6 @@ def _make_raw_pr_state(
         labels=labels,
         head_statuses=head_statuses,
         mq_queued_label_events=tuple(label_events),
-        required_check_results=tuple(check_results),
         changed_paths=changed,
     )
 
@@ -374,14 +323,9 @@ def build_snapshot(
         timeline_data = timeline_resp.parsed_data
         timeline = list(timeline_data) if timeline_data is not None else []
 
-        # Check runs for the head SHA.
-        checks_resp = client.rest.checks.list_for_ref(owner, repo, head_sha)
-        checks_data = checks_resp.parsed_data
-        # Checks API returns a wrapper with .check_runs OR a bare list — handle both
-        if hasattr(checks_data, "check_runs"):
-            checks = list(checks_data.check_runs)
-        else:
-            checks = list(checks_data) if checks_data is not None else []
+        # Per 03-wr-09: no check-runs fetch. Required-check evaluation
+        # lives in GitHub branch protection; executor reads merge-API
+        # response to translate protection-blocked merges to Eject.
 
         # OQ-2: skip list_files when the PR is already labelled for a queue.
         if _has_queue_label(labels, config):
@@ -396,7 +340,6 @@ def build_snapshot(
                 pr=pr_obj,
                 statuses=statuses,
                 timeline=timeline,
-                checks=checks,
                 files=files,
                 config=config,
             )

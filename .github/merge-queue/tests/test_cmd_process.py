@@ -267,7 +267,6 @@ def test_process_cycle__fake__corrupt_squash__returns_failure_outcome(
         queues=frozenset({"miopen-provider"}),
         enqueued_at=utc(2026, 5, 18, 9, 0),
         is_validly_active=True,
-        required_check_results=(),
     )
 
     def fake_decide_cycle(snapshot: Any, config: Any, now: Any) -> list[Any]:

@@ -6,9 +6,12 @@ Three public functions:
   - ``derive_snapshot(raw, config, now) -> tuple[Snapshot, tuple[Defer, ...]]``
   - ``decide_cycle(snapshot, config, now) -> list[Action]``
 
-Private helpers:
-  - ``_evaluate_required_checks(results) -> Literal["all_passed", "any_failed", "pending"]``
-  - ``_first_failed_check_name(results) -> str``
+Required-CI-check evaluation is delegated to GitHub branch protection
+per 03-wr-09: ``decide_cycle`` unconditionally emits ``Squash`` for any
+validly-active head-of-queue PR, and ``executor._handle_squash``
+translates a merge-API 405/422 into ``Eject`` (failing required check)
+or no-op (pending check — retry next cycle). This removes a class of
+config-drift bug between ``path_to_queues.yml`` and protection state.
 
 **Pure function contract (RFC §4.9 + PURE-09):**
   - No ``datetime.now()`` / ``datetime.utcnow()`` calls; ``now`` is always an arg.
@@ -26,14 +29,12 @@ Private helpers:
 **Pitfalls guarded:**
   - Pitfall 2 (impersonation): ``is_app_identity`` triple-check via ``_helpers``.
   - Pitfall 4 (timeline lag): three-case derive logic; Case 2 = label-without-event.
-  - Pitfall 5 (exhaustiveness): ``case _: assert_never(verdict)`` in ``decide_cycle``.
   - Pitfall 7 (vacuous headship): ``if not pr.queues: return False`` in ``is_head_of_all``.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, assert_never
 
 from rocm_mq._helpers import is_app_identity, is_app_identity_actor
 from rocm_mq.state import (
@@ -48,7 +49,6 @@ from rocm_mq.state import (
     PRState,
     RawPRState,
     RawSnapshot,
-    RequiredCheckResult,
     Snapshot,
     Squash,
 )
@@ -56,45 +56,6 @@ from rocm_mq.state import (
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
-
-
-def _evaluate_required_checks(
-    results: tuple[RequiredCheckResult, ...],
-) -> Literal["all_passed", "any_failed", "pending"]:
-    """Classify the overall verdict of required check results.
-
-    Priority order:
-    1. ``"any_failed"`` — at least one check is in ``{"failure", "error"}``.
-    2. ``"pending"``    — at least one check is ``"pending"`` (and none failed).
-    3. ``"all_passed"`` — all checks are in ``{"success", "neutral"}`` (or empty tuple).
-
-    An empty tuple of results returns ``"all_passed"``: a PR with no required checks
-    may be squash-merged (RFC §4.6 allows this; Plan 04 invariant tests sanity-check).
-    """
-    _FAILURE_STATES = frozenset({"failure", "error"})
-    has_pending = False
-    for r in results:
-        if r.state in _FAILURE_STATES:
-            return "any_failed"
-        if r.state == "pending":
-            has_pending = True
-    if has_pending:
-        return "pending"
-    return "all_passed"
-
-
-def _first_failed_check_name(results: tuple[RequiredCheckResult, ...]) -> str:
-    """Return the ``name`` of the first failed (or errored) required check.
-
-    Raises ``ValueError`` if no failed result is found — callers must only invoke
-    this function after confirming ``_evaluate_required_checks`` returned
-    ``"any_failed"``.
-    """
-    _FAILURE_STATES = frozenset({"failure", "error"})
-    for r in results:
-        if r.state in _FAILURE_STATES:
-            return r.name
-    raise ValueError("_first_failed_check_name called with no failed results")
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +176,6 @@ def derive_pr(
         queues=queues,
         enqueued_at=enqueued_at,
         is_validly_active=is_validly_active,
-        required_check_results=raw.required_check_results,
     )
 
 
@@ -364,17 +324,14 @@ def decide_cycle(
             )
             continue
 
-        # Activation is valid — evaluate required CI checks
-        verdict = _evaluate_required_checks(pr.required_check_results)
-        match verdict:
-            case "all_passed":
-                actions.append(Squash(pr=pr))
-            case "any_failed":
-                failed_name = _first_failed_check_name(pr.required_check_results)
-                actions.append(Eject(pr=pr, reason=failed_name))
-            case "pending":
-                pass  # Retry next cycle — no action emitted
-            case _:
-                assert_never(verdict)  # exhaustiveness guard (mypy --strict)
+        # Activation is valid — emit Squash unconditionally.
+        # Per 03-wr-09 refactor: required-check evaluation is delegated to
+        # GitHub branch protection (single source of truth). The executor's
+        # _handle_squash translates a 405/422 from the merge API into either
+        # Eject (failing required check, named in the error body) or no-op
+        # (pending required check — try next cycle). This removes a class
+        # of config-drift bug between path_to_queues.yml's `required_checks`
+        # list and branch protection's actual required-checks settings.
+        actions.append(Squash(pr=pr))
 
     return actions

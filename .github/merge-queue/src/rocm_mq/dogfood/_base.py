@@ -146,7 +146,7 @@ def create_dogfood_pr(
     # ``.object`` continues to work alongside the real client.
     ref_resp = client.rest.git.get_ref(owner, repo, "heads/develop")
     _ref_obj = ref_resp.parsed_data
-    _target = getattr(_ref_obj, "object_", None) or _ref_obj.object  # type: ignore[attr-defined]
+    _target = getattr(_ref_obj, "object_", None) or _ref_obj.object
     develop_tip: str = _target.sha
 
     # 2. Create branch ref off the tip.

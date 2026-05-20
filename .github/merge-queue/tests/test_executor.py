@@ -66,7 +66,7 @@ def _make_pr_state(
     queues: frozenset[str] = frozenset({"miopen-provider"}),
     is_validly_active: bool = False,
 ) -> PRState:
-    """Build a PRState for executor tests (no behaviour from required_checks)."""
+    """Build a PRState for executor tests."""
     return PRState(
         number=number,
         head_sha=head_sha,
@@ -74,7 +74,6 @@ def _make_pr_state(
         queues=queues,
         enqueued_at=utc(2026, 4, 22, 14, 10),
         is_validly_active=is_validly_active,
-        required_check_results=(),
     )
 
 

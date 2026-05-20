@@ -76,21 +76,13 @@ paths:
   - path: dogfood/
     queues: [dogfood-canary]
 
-required_checks:
-  # Production queues — `TheRock CI Summary` is the existing fork-side
-  # required check (.github/workflows/therock-ci.yml job name; verified
-  # live on PR #21 head SHA, plan 03-03 Task 2).
-  hipdnn: ["TheRock CI Summary"]
-  miopen-provider: ["TheRock CI Summary"]
-  hipblaslt-provider: ["TheRock CI Summary"]
-  hip-kernel-provider: ["TheRock CI Summary"]
-  fusilli-provider: ["TheRock CI Summary"]
-  integration-tests: ["TheRock CI Summary"]
-
-  # SYNTHETIC — Phase 5 porting-prep strips this for upstream.
-  # The canary workflow's check context name is the PLACEHOLDER
-  # "mq-dogfood-canary / canary" — the literal string GitHub registers
-  # against the head SHA depends on the workflow job's `name:` field
-  # (plan 03-09). After plan 03-09's first canary PR runs, the actual
-  # context string MUST be re-verified and pinned here.
-  dogfood-canary: ["mq-dogfood-canary / canary"]
+# `required_checks` section removed per 03-wr-09 design refactor: branch
+# protection is now the single source of truth for which checks gate a
+# merge. The queue no longer maintains a duplicate list. The executor
+# reads the merge-API 405/422 response to translate protection-blocked
+# merges into Eject actions with the GitHub-supplied check name.
+#
+# To configure required checks for this repo: Settings → Branches →
+# Branch protection rules (or Settings → Rules → Rulesets for newer
+# path-scoped configurations). Add the check name(s) to "Require
+# status checks to pass before merging" on the develop branch.

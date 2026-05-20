@@ -59,8 +59,8 @@ def test_yaml_parseable() -> None:
 
 
 def test_top_level_keys(parsed: dict[str, object]) -> None:
-    """Top-level keys are exactly {queues, paths, required_checks}."""
-    assert set(parsed.keys()) == {"queues", "paths", "required_checks"}, (
+    """Top-level keys are exactly {queues, paths} post 03-wr-09."""
+    assert set(parsed.keys()) == {"queues", "paths"}, (
         f"Unexpected top-level keys: {set(parsed.keys())}"
     )
 
@@ -78,13 +78,14 @@ def test_dogfood_canary_present(parsed: dict[str, object]) -> None:
     assert "dogfood-canary" in parsed["queues"]
 
 
-def test_required_checks_covers_all_queues(parsed: dict[str, object]) -> None:
-    """`required_checks` has an entry for every queue (and no extras)."""
-    queues = set(parsed["queues"])
-    rc_keys = set(parsed["required_checks"].keys())
-    assert rc_keys == queues, (
-        f"required_checks keys {rc_keys} != queues {queues} "
-        f"(missing: {queues - rc_keys}, extra: {rc_keys - queues})"
+def test_no_required_checks_section(parsed: dict[str, object]) -> None:
+    """Post 03-wr-09: required_checks section MUST NOT be present in the
+    YAML. Branch protection is the single source of truth for which
+    checks gate a merge."""
+    assert "required_checks" not in parsed, (
+        "required_checks was removed per 03-wr-09 — branch protection is "
+        "now the source of truth. Configure required checks via Settings "
+        "→ Branches → Branch protection rules instead."
     )
 
 

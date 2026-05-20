@@ -237,7 +237,6 @@ _EXPECTED_DATACLASS_NAMES = {
     "CommitStatus",
     "TimelineActor",
     "LabelEvent",
-    "RequiredCheckResult",
     "RawPRState",
     "RawSnapshot",
     # Derived family

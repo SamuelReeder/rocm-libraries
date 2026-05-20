@@ -117,7 +117,6 @@ def _make_forged_raw_pr_with_creator(creator):
         labels=frozenset({"mq:queued", "mq:active", "mq:miopen-provider"}),
         head_statuses=(forged_status,),
         mq_queued_label_events=(app_queued_event,),
-        required_check_results=(),
         changed_paths=(),
     )
 

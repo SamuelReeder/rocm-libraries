@@ -82,20 +82,17 @@ class LabelEvent:
 
 
 @dataclass(frozen=True, slots=True)
-class RequiredCheckResult:
-    """A required CI check result for a PR."""
-
-    name: str
-    state: str  # "pending" | "success" | "failure" | "error" | "neutral"
-
-
-@dataclass(frozen=True, slots=True)
 class RawPRState:
     """Raw GitHub API state for a single PR — unfiltered, unprocessed (D-01, D-02).
 
     ``head_statuses`` carries EVERY commit status on the current head SHA.
     ``mq_queued_label_events`` carries EVERY ``mq:queued`` label timeline event.
     The pure ``derive_pr`` applies all filtering (context + creator).
+
+    Note: per 03-wr-09 design refactor, required CI check evaluation is
+    NOT done by the queue. Branch protection is the single source of truth
+    for which checks gate a merge; the executor reads GitHub's merge-API
+    response to translate protection-blocked merges into Eject actions.
     """
 
     number: int
@@ -103,7 +100,6 @@ class RawPRState:
     labels: frozenset[str]
     head_statuses: tuple[CommitStatus, ...]
     mq_queued_label_events: tuple[LabelEvent, ...]
-    required_check_results: tuple[RequiredCheckResult, ...]
     changed_paths: tuple[str, ...]
 
 
@@ -136,7 +132,6 @@ class PRState:
     queues: frozenset[str]  # queue names this PR belongs to (from pathmap + labels)
     enqueued_at: datetime  # must be tz-aware; FIFO sort key
     is_validly_active: bool
-    required_check_results: tuple[RequiredCheckResult, ...]
 
 
 @dataclass(frozen=True, slots=True)

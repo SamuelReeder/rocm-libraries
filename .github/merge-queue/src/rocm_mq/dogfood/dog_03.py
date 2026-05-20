@@ -62,7 +62,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from rocm_mq.config import load_from_develop
 from rocm_mq.dogfood._base import (
     DogfoodResult,
     create_dogfood_pr,
@@ -103,37 +102,40 @@ _PR_FILE_CONTENT: str = (
 # Marker the renderer embeds in every status comment body (comment.py).
 _STATUS_MARKER: str = "<!-- rocm-mq-status -->"
 
-# Synthetic queue key in path_to_queues.yml that the dogfood-canary
-# required-check is pinned under (plan 03-03).
+# Synthetic queue key in path_to_queues.yml that routes dogfood/** paths
+# (the canary workflow listens on these paths).
 _DOGFOOD_QUEUE_KEY: str = "dogfood-canary"
+
+# Canary check-run name. Tied to ``.github/workflows/mq-dogfood-canary.yml``
+# (plan 03-09) — the workflow's job-id is ``canary`` and the workflow name
+# is ``mq-dogfood-canary``, so GHA registers the check-run as
+# ``mq-dogfood-canary / canary``. Post 03-wr-09, required-check evaluation
+# is delegated to branch protection — the queue ejects with whatever check
+# name appears in the merge-API failure message. This driver matches on
+# the GHA-prefix segment (``mq-dogfood-canary``) which is stable against
+# job-id renames within the same workflow file.
+_CANARY_CHECK_NAME: str = "mq-dogfood-canary / canary"
 
 
 # ---------------------------------------------------------------------------
-# Canary check-name discovery — read at runtime from path_to_queues.yml
+# Canary check-name resolution — hardcoded per 03-wr-09
 # ---------------------------------------------------------------------------
 
 
 def _resolve_canary_check_name(
     client: Any, owner: str, repo: str
 ) -> str:
-    """Return the canary's registered required-check name from develop config.
+    """Return the canary's registered required-check name.
 
-    Loads ``.github/merge-queue/path_to_queues.yml`` via the same Contents
-    API path the processor uses (RFC §4.8) and reads
-    ``required_checks.dogfood-canary[0]``. Raises ``RuntimeError`` if the
-    canary entry is missing or empty — the driver cannot proceed without
-    the canonical check-name string to match the eject reason against.
+    Pre-03-wr-09 this loaded from path_to_queues.yml's required_checks map;
+    that map no longer exists (branch protection owns required-check truth).
+    The check name is now sourced from a module constant tied to the
+    canary workflow file. ``client``, ``owner``, ``repo`` are unused but
+    kept in the signature so the unit-test seam (a per-test patch of this
+    function) does not need rewiring.
     """
-    config = load_from_develop(client, owner, repo)
-    required = (config or {}).get("required_checks") or {}
-    canary_checks = required.get(_DOGFOOD_QUEUE_KEY) or []
-    if not canary_checks:
-        raise RuntimeError(
-            f"path_to_queues.yml has no required_checks.{_DOGFOOD_QUEUE_KEY} "
-            f"entry; cannot resolve the canary check-run name DOG-03 must "
-            f"match on (see plan 03-03)."
-        )
-    return str(canary_checks[0])
+    _ = (client, owner, repo)  # signature parity; unused post 03-wr-09
+    return _CANARY_CHECK_NAME
 
 
 def _check_name_substring(check_name: str) -> str:

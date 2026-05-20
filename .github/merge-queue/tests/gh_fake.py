@@ -102,7 +102,7 @@ class FakeRepoState:
 # ---------------------------------------------------------------------------
 
 
-def _make_request_failed(status_code: int) -> RequestFailed:
+def _make_request_failed(status_code: int, message: str = "") -> RequestFailed:
     """Construct a real RequestFailed via __new__ to avoid the httpx.Response dep.
 
     The executor's ``except RequestFailed as e: if e.response.status_code == 404``
@@ -122,10 +122,17 @@ def _make_request_failed(status_code: int) -> RequestFailed:
     # test_make_request_failed_shim__roundtrip_does_not_raise so a future
     # githubkit bump that adds a new read-in-repr attribute fails the
     # smoke test rather than the executor's catch path at runtime.
+    # ``_handle_squash_failure`` in executor.py (post 03-wr-09) reads
+    # ``response.json()['message']`` to translate GitHub merge-API errors
+    # into Eject reasons. Provide a tiny JSON-returning shim so tests can
+    # exercise the error-translation branches.
+    body_json = {"message": message} if message else {}
     exc.response = SimpleNamespace(  # type: ignore[assignment]
         status_code=status_code,
         _status_reason=f"HTTP {status_code} (test shim)",
         url="https://github.test/shim",
+        text=message,
+        json=lambda: body_json,
     )
     # githubkit's RequestFailed.__repr__ reads .request.method + .request.url.
     exc.request = SimpleNamespace(  # type: ignore[assignment]
@@ -582,7 +589,9 @@ class _PullsNS:
         if pr is None:
             raise _make_request_failed(404)
         if pr.merged:
-            raise _make_request_failed(405)
+            raise _make_request_failed(
+                405, message="Pull Request is already merged"
+            )
         squash_sha = f"squash_{pull_number}_{pr.head_sha[:8]}"
         prior_tip = self._state.develop_tip
         self._state.commits[squash_sha] = {

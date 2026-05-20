@@ -138,13 +138,10 @@ def _render_active(
     # Phase 4 may add an activated_at field if needed for display.
     lines.append(f"Activated on head SHA `{pr_state.head_sha}`.")
     lines.append("")
-    if pr_state.required_check_results:
-        lines.append("| Check | Status |")
-        lines.append("|---|---|")
-        for check in pr_state.required_check_results:
-            lines.append(f"| {check.name} | {check.state} |")
-    else:
-        lines.append("_No required checks configured._")
+    lines.append(
+        "_Required CI checks are enforced by branch protection — see the "
+        "PR's checks panel for live state._"
+    )
     return "\n".join(lines)
 
 

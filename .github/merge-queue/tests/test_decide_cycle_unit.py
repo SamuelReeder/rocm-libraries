@@ -22,7 +22,6 @@ from rocm_mq.state import (
     Eject,
     MergeQueueConfig,
     PRState,
-    RequiredCheckResult,
     Snapshot,
     Squash,
 )
@@ -54,7 +53,6 @@ def _make_pr_state(
     queues: frozenset[str],
     has_active_label: bool = False,
     is_validly_active: bool = False,
-    required_check_results: tuple[RequiredCheckResult, ...] = (),
     enqueued_at: datetime | None = None,
 ) -> PRState:
     """Factory for PRState test instances."""
@@ -68,20 +66,7 @@ def _make_pr_state(
         queues=queues,
         enqueued_at=enqueued_at or _T0,
         is_validly_active=is_validly_active,
-        required_check_results=required_check_results,
     )
-
-
-def _all_passed_checks() -> tuple[RequiredCheckResult, ...]:
-    return (RequiredCheckResult(name="CI / build", state="success"),)
-
-
-def _failed_checks() -> tuple[RequiredCheckResult, ...]:
-    return (RequiredCheckResult(name="CI / build", state="failure"),)
-
-
-def _pending_checks() -> tuple[RequiredCheckResult, ...]:
-    return (RequiredCheckResult(name="CI / build", state="pending"),)
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +116,6 @@ def test_dispatch_row3__ready_active_valid_checks_pass_emits_squash() -> None:
         frozenset({"hipdnn"}),
         has_active_label=True,
         is_validly_active=True,
-        required_check_results=_all_passed_checks(),
     )
     snapshot = Snapshot(prs=(pr,))
     actions = decide_cycle(snapshot, _CONFIG, _NOW)
@@ -139,45 +123,11 @@ def test_dispatch_row3__ready_active_valid_checks_pass_emits_squash() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Row 4: ready + active + valid + one check failed → Eject(name of failed check)
+# Rows 4 + 5 (failed / pending check eject branches) removed per 03-wr-09:
+# required-check evaluation now lives in GitHub branch protection, surfaced
+# via merge-API errors in executor._handle_squash. The pure layer always
+# emits Squash for validly-active head-of-queue PRs.
 # ---------------------------------------------------------------------------
-
-
-def test_dispatch_row4__ready_active_valid_checks_failed_emits_eject_with_name() -> None:
-    """Row 4: ready + active + valid + one check failed → [Eject(pr, name)]."""
-    pr = _make_pr_state(
-        4,
-        frozenset({"hipdnn"}),
-        has_active_label=True,
-        is_validly_active=True,
-        required_check_results=_failed_checks(),
-    )
-    snapshot = Snapshot(prs=(pr,))
-    actions = decide_cycle(snapshot, _CONFIG, _NOW)
-    assert len(actions) == 1
-    eject = actions[0]
-    assert isinstance(eject, Eject)
-    assert eject.pr.number == 4
-    assert "CI / build" in eject.reason  # name of the failed check
-
-
-# ---------------------------------------------------------------------------
-# Row 5: ready + active + valid + all pending → no action
-# ---------------------------------------------------------------------------
-
-
-def test_dispatch_row5__ready_active_valid_checks_pending_emits_nothing() -> None:
-    """Row 5: ready + active + valid + all pending → []."""
-    pr = _make_pr_state(
-        5,
-        frozenset({"hipdnn"}),
-        has_active_label=True,
-        is_validly_active=True,
-        required_check_results=_pending_checks(),
-    )
-    snapshot = Snapshot(prs=(pr,))
-    actions = decide_cycle(snapshot, _CONFIG, _NOW)
-    assert actions == []
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +184,6 @@ def test_pitfall7__empty_queues_prevents_vacuous_headship() -> None:
         frozenset(),
         has_active_label=True,
         is_validly_active=True,
-        required_check_results=_all_passed_checks(),
     )
     snapshot = Snapshot(prs=(pr_no_queues,))
     actions = decide_cycle(snapshot, _CONFIG, _NOW)
@@ -261,7 +210,6 @@ def test_bonus__5a_continue_activate_only_never_two_actions_for_same_pr() -> Non
         frozenset({"hipdnn"}),
         has_active_label=False,  # no mq:active → 5a fires
         is_validly_active=True,  # would pass 5b if active label were present
-        required_check_results=_all_passed_checks(),  # would Squash if past 5b
     )
     snapshot = Snapshot(prs=(pr,))
     actions = decide_cycle(snapshot, _CONFIG, _NOW)
@@ -297,7 +245,6 @@ def test_bonus__q2_resolution__disjoint_queues_squash_and_activate_same_cycle() 
         frozenset({"hipdnn"}),
         has_active_label=True,
         is_validly_active=True,
-        required_check_results=_all_passed_checks(),
         enqueued_at=_T1,
     )
     # PR B: in miopen-provider queue only (disjoint from A), ready to Activate
@@ -337,13 +284,12 @@ def test_bonus__q2_resolution__disjoint_queues_squash_and_activate_same_cycle() 
 
 
 def test_edge__no_required_checks_active_valid_squash() -> None:
-    """PR with zero required_check_results + valid active → Squash (no checks = all_passed)."""
+    """Valid active PR → Squash (per 03-wr-09 always-Squash, no queue-side check eval)."""
     pr = _make_pr_state(
         11,
         frozenset({"hipdnn"}),
         has_active_label=True,
         is_validly_active=True,
-        required_check_results=(),  # zero results
     )
     snapshot = Snapshot(prs=(pr,))
     actions = decide_cycle(snapshot, _CONFIG, _NOW)
@@ -351,25 +297,5 @@ def test_edge__no_required_checks_active_valid_squash() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Edge: mixed failed+pending checks → Eject (any_failed takes priority)
-# ---------------------------------------------------------------------------
-
-
-def test_edge__mixed_failed_and_pending_emits_eject() -> None:
-    """any_failed takes priority over pending: Eject with name of failed check."""
-    pr = _make_pr_state(
-        12,
-        frozenset({"hipdnn"}),
-        has_active_label=True,
-        is_validly_active=True,
-        required_check_results=(
-            RequiredCheckResult(name="CI / lint", state="pending"),
-            RequiredCheckResult(name="CI / test", state="failure"),
-        ),
-    )
-    snapshot = Snapshot(prs=(pr,))
-    actions = decide_cycle(snapshot, _CONFIG, _NOW)
-    assert len(actions) == 1
-    eject = actions[0]
-    assert isinstance(eject, Eject)
-    assert "CI / test" in eject.reason
+# (mixed failed+pending eject test removed per 03-wr-09 — pure layer no
+# longer evaluates checks; executor reads merge-API response instead.)

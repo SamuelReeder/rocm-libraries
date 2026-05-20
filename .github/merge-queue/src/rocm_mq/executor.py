@@ -304,6 +304,16 @@ def _handle_squash(
 ) -> ActionOutcome:
     """Squash-merge ``pr`` and verify the post-squash parent SHA.
 
+    On merge-API failure, translate GitHub's response into either:
+      * **no-op** (idempotent re-merge of an already-merged PR; pending
+        required check — wait for next cycle), or
+      * **inline eject** (failing required check, missing approval, merge
+        conflict, head-SHA-changed-during-attempt).
+
+    Per 03-wr-09: branch protection is the source of truth for required
+    checks. The queue no longer pre-evaluates checks before squash; it
+    just tries the merge and reads GitHub's error message to decide.
+
     See ``_verify_squash`` for the Pitfall 8 readback details.
     """
     action = Squash(pr=pr)
@@ -312,7 +322,8 @@ def _handle_squash(
     # parents[0].sha MUST equal after a correct squash.
     pre_squash_develop_sha = _read_branch_tip(client, owner, repo, _TRUNK_BRANCH)
 
-    # Step 2: squash-merge. 405 = already merged (idempotent no-op per UK-3).
+    # Step 2: squash-merge. GitHub returns various 4xx codes when the merge
+    # is not currently permitted; _handle_squash_failure translates them.
     try:
         merge_resp = client.rest.pulls.merge(
             owner,
@@ -321,13 +332,7 @@ def _handle_squash(
             merge_method="squash",
         )
     except RequestFailed as exc:
-        if _status_code(exc) == 405:
-            return ActionOutcome(
-                action=action,
-                success=True,
-                error_message="already merged - no-op",
-            )
-        raise
+        return _handle_squash_failure(exc, pr, action, client, config, owner, repo)
 
     squash_sha = str(merge_resp.parsed_data.sha)
 
@@ -345,6 +350,106 @@ def _handle_squash(
         return ActionOutcome(action=action, success=False, error_message=str(exc))
 
     return ActionOutcome(action=action, success=True, error_message=None)
+
+
+def _handle_squash_failure(
+    exc: RequestFailed,
+    pr: PRState,
+    action: Squash,
+    client: GitHubClient,
+    config: MergeQueueConfig,
+    owner: str,
+    repo: str,
+) -> ActionOutcome:
+    """Translate a merge-API failure into no-op or inline-eject.
+
+    Status-code map (per 03-wr-09 design + GitHub merge-API docs):
+
+      * **200** — handled by the caller's success path; never reaches here.
+      * **405** Method Not Allowed — most common failure. Body inspected:
+          - "already merged" → no-op (success=True)
+          - "expected" / "in_progress" / "in progress" in body → pending
+            required check; do NOT eject, retry next cycle (success=False
+            with informational error_message).
+          - any other 405 → permanent failure; inline-eject with body text
+            as reason.
+      * **409** Conflict — head SHA changed since GET (author push raced
+        with our squash window). Eject; next cycle re-evaluates if the
+        PR is re-enqueued.
+      * **422** Unprocessable Entity — merge conflict with develop, or
+        validation failure. Eject.
+      * other → re-raise (unexpected; orchestrator surfaces as cycle
+        failure).
+    """
+    status = _status_code(exc)
+    body = _error_message_body(exc)
+    body_lower = body.lower()
+
+    # Idempotent re-merge of a previously-merged PR (UK-3).
+    if status == 405 and "already merged" in body_lower:
+        return ActionOutcome(
+            action=action,
+            success=True,
+            error_message="already merged - no-op",
+        )
+
+    # Pending required check — don't eject, retry next cycle.
+    # Branch protection knows the check exists but it hasn't reported yet.
+    _PENDING_MARKERS = ("expected", "in_progress", "in progress")
+    if status == 405 and any(m in body_lower for m in _PENDING_MARKERS):
+        return ActionOutcome(
+            action=action,
+            success=False,
+            error_message=f"merge pending (required check not yet reported): {body}",
+        )
+
+    # Permanent failures — inline-eject with the GitHub-supplied reason.
+    # Status 409 = head changed; 422 = unprocessable (typically merge
+    # conflict); 405 (other) = required check failed, missing approval, etc.
+    if status in (405, 409, 422):
+        if status == 409:
+            reason = "head SHA changed during squash attempt (author push or rebase)"
+        elif status == 422 and "merge conflict" not in body_lower:
+            # 422 without explicit conflict wording is still typically a
+            # mergeability/validation issue — use the body but prefix for
+            # clarity.
+            reason = body or "merge unprocessable (validation failed)"
+        else:
+            # 405 with non-pending message: branch-protection block.
+            # GitHub's message is descriptive (e.g., "Required status check
+            # 'foo' is failing", "At least 1 approving review is required").
+            reason = body or "merge blocked by branch protection"
+        _handle_eject(pr, reason, client, config, owner, repo)
+        return ActionOutcome(
+            action=Eject(pr=pr, reason=reason),
+            success=False,
+            error_message=f"squash blocked → ejected: {reason}",
+        )
+
+    # Unknown / unexpected status — propagate.
+    raise exc
+
+
+def _error_message_body(exc: RequestFailed) -> str:
+    """Best-effort extraction of GitHub's ``message`` field from an error.
+
+    GitHub error responses are JSON of the shape
+    ``{"message": "...", "documentation_url": "..."}``. Returns the
+    ``message`` string when parseable, else the raw response text, else
+    ``str(exc)`` as a final fallback. Never raises.
+    """
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            data = response.json()
+            if isinstance(data, dict) and "message" in data:
+                return str(data["message"])
+        except (ValueError, AttributeError, TypeError):
+            pass
+        text = getattr(response, "text", "")
+        if text:
+            return str(text)
+    return str(exc)
 
 
 def _verify_squash(

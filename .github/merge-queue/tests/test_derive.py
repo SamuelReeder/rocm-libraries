@@ -32,7 +32,6 @@ from rocm_mq.state import (
     PRState,
     RawPRState,
     RawSnapshot,
-    RequiredCheckResult,
     Snapshot,
     TimelineActor,
 )
@@ -126,7 +125,6 @@ def test_derive_pr__case1_normal_returns_pr_state() -> None:
         mq_queued_label_events=(
             _queued_event(_app_actor(), enqueue_time),
         ),
-        required_check_results=(RequiredCheckResult(name="CI / build", state="pending"),),
         changed_paths=(),
     )
     result = derive_pr(raw, _CONFIG, enqueue_time)
@@ -154,7 +152,6 @@ def test_derive_pr__case1_enqueued_at_uses_most_recent_app_event() -> None:
             _queued_event(_app_actor(), t1),
             _queued_event(_app_actor(), t2),  # later event = re-enqueue
         ),
-        required_check_results=(),
         changed_paths=(),
     )
     result = derive_pr(raw, _CONFIG, t2)
@@ -173,7 +170,6 @@ def test_derive_pr__case1_queues_excludes_state_labels() -> None:
         labels=frozenset({"mq:queued", "mq:active", "mq:hipdnn", "mq:miopen-provider"}),
         head_statuses=(),
         mq_queued_label_events=(_queued_event(_app_actor(), t),),
-        required_check_results=(),
         changed_paths=(),
     )
     result = derive_pr(raw, _CONFIG, t)
@@ -197,7 +193,6 @@ def test_derive_pr__case2_label_without_event_returns_deferred() -> None:
         labels=frozenset({"mq:queued"}),
         head_statuses=(),
         mq_queued_label_events=(),  # no events yet — timeline lag
-        required_check_results=(),
         changed_paths=(),
     )
     result = derive_pr(raw, _CONFIG, t)
@@ -217,7 +212,6 @@ def test_derive_pr__case2_deferred_reason_is_descriptive() -> None:
         labels=frozenset({"mq:queued", "mq:hipdnn"}),
         head_statuses=(),
         mq_queued_label_events=(),
-        required_check_results=(),
         changed_paths=(),
     )
     result = derive_pr(raw, _CONFIG, t)
@@ -244,7 +238,6 @@ def test_derive_pr__case3_non_app_event_only_returns_deferred() -> None:
         mq_queued_label_events=(
             _queued_event(_other_actor(), t),  # non-App applied it
         ),
-        required_check_results=(),
         changed_paths=(),
     )
     result = derive_pr(raw, _CONFIG, t)
@@ -266,7 +259,6 @@ def test_derive_pr__case3_non_app_event_even_with_label_is_deferred() -> None:
         mq_queued_label_events=(
             _queued_event(_other_actor(), t),
         ),
-        required_check_results=(),
         changed_paths=(),
     )
     result = derive_pr(raw, _CONFIG, t)
@@ -284,7 +276,6 @@ def test_derive_pr__no_enqueue_evidence_returns_deferred() -> None:
         labels=frozenset(),  # no mq:queued label
         head_statuses=(),
         mq_queued_label_events=(),
-        required_check_results=(),
         changed_paths=(),
     )
     result = derive_pr(raw, _CONFIG, t)
@@ -379,7 +370,6 @@ def test_derive_pr__is_validly_active_matrix(
         labels=frozenset({"mq:queued"}),
         head_statuses=(status,),
         mq_queued_label_events=(_queued_event(_app_actor(), t),),
-        required_check_results=(),
         changed_paths=(),
     )
     result = derive_pr(raw, _CONFIG, t)
@@ -400,7 +390,6 @@ def test_derive_pr__no_head_statuses_is_not_validly_active() -> None:
         labels=frozenset({"mq:queued"}),
         head_statuses=(),  # no statuses at all
         mq_queued_label_events=(_queued_event(_app_actor(), t),),
-        required_check_results=(),
         changed_paths=(),
     )
     result = derive_pr(raw, _CONFIG, t)
@@ -431,7 +420,6 @@ def test_derive_pr__multiple_statuses_one_valid_is_validly_active() -> None:
         labels=frozenset({"mq:queued"}),
         head_statuses=(bad_status, _canonical_status()),  # one bad, one good
         mq_queued_label_events=(_queued_event(_app_actor(), t),),
-        required_check_results=(),
         changed_paths=(),
     )
     result = derive_pr(raw, _CONFIG, t)
@@ -512,7 +500,6 @@ def test_property__adversarial_creator_yields_not_validly_active(
         labels=frozenset({"mq:queued"}),
         head_statuses=(status,),
         mq_queued_label_events=(_queued_event(_app_actor(), t),),
-        required_check_results=(),
         changed_paths=(),
     )
     result = derive_pr(raw, _CONFIG, t)
@@ -539,7 +526,6 @@ def test_derive_snapshot__normal_prs_go_into_snapshot() -> None:
                 labels=frozenset({"mq:queued", "mq:hipdnn"}),
                 head_statuses=(),
                 mq_queued_label_events=(_queued_event(app_actor, t),),
-                required_check_results=(),
                 changed_paths=(),
             ),
             RawPRState(
@@ -548,7 +534,6 @@ def test_derive_snapshot__normal_prs_go_into_snapshot() -> None:
                 labels=frozenset({"mq:queued", "mq:miopen-provider"}),
                 head_statuses=(),
                 mq_queued_label_events=(_queued_event(app_actor, t),),
-                required_check_results=(),
                 changed_paths=(),
             ),
         )
@@ -574,7 +559,6 @@ def test_derive_snapshot__deferred_prs_emit_defer_actions() -> None:
                 labels=frozenset({"mq:queued"}),
                 head_statuses=(),
                 mq_queued_label_events=(_queued_event(_app_actor(), t),),
-                required_check_results=(),
                 changed_paths=(),
             ),
             # Timeline-lag PR (deferred)
@@ -584,7 +568,6 @@ def test_derive_snapshot__deferred_prs_emit_defer_actions() -> None:
                 labels=frozenset({"mq:queued"}),
                 head_statuses=(),
                 mq_queued_label_events=(),  # no event yet
-                required_check_results=(),
                 changed_paths=(),
             ),
         )

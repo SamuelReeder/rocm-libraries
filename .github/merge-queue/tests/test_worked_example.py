@@ -32,7 +32,6 @@ from rocm_mq.pathmap import queues_for_paths
 from rocm_mq.state import (
     Activate,
     PRState,
-    RequiredCheckResult,
     Snapshot,
     Squash,
 )
@@ -89,12 +88,6 @@ def _make_pr(
         queues=queues,
         enqueued_at=enqueued_at,  # type: ignore[arg-type]
         is_validly_active=is_active,
-        required_check_results=(
-            RequiredCheckResult(
-                "TheRock CI Summary",
-                "success" if all_checks_passed else "pending",
-            ),
-        ),
     )
 
 
@@ -119,7 +112,6 @@ def _active(pr: PRState) -> PRState:
         queues=pr.queues,
         enqueued_at=pr.enqueued_at,
         is_validly_active=True,
-        required_check_results=(RequiredCheckResult("TheRock CI Summary", "success"),),
     )
 
 

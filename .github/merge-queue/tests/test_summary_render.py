@@ -22,7 +22,6 @@ from rocm_mq.state import (
     Eject,
     PartialPRState,
     PRState,
-    RequiredCheckResult,
     Snapshot,
     Squash,
     UpdateComment,
@@ -57,7 +56,6 @@ def _make_pr(
         queues=frozenset(),  # queues not relevant for renderer
         enqueued_at=enqueued_at,
         is_validly_active=is_validly_active,
-        required_check_results=tuple(RequiredCheckResult(n, s) for n, s in checks),
     )
 
 

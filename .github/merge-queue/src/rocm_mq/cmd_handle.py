@@ -366,7 +366,6 @@ def _upsert_status_comment(
         queues=queues,
         enqueued_at=now,
         is_validly_active=False,
-        required_check_results=(),
     )
     # queue_positions: the handler does not know cycle-time queue depths,
     # so we render placeholder rows showing "pending" position. The
@@ -651,7 +650,6 @@ def _handle_dequeue(
         queues=queues,
         enqueued_at=now,
         is_validly_active=False,
-        required_check_results=(),
     )
     ctx = RenderContext(
         author_login=pr_author_login,

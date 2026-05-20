@@ -29,7 +29,6 @@ import pytest
 from rocm_mq.snapshot import (
     _make_raw_pr_state,
     _make_status_creator,
-    _map_check_run_state,
     build_snapshot,
 )
 from rocm_mq.state import (
@@ -79,10 +78,6 @@ def _label_event(
         label=SimpleNamespace(name=label_name),
         created_at=created_at,
     )
-
-
-def _check_run(*, name: str, status: str, conclusion: str | None) -> SimpleNamespace:
-    return SimpleNamespace(name=name, status=status, conclusion=conclusion)
 
 
 def _pr(*, number: int, head_sha: str, labels: list[str]) -> SimpleNamespace:
@@ -147,41 +142,9 @@ def test_make_status_creator__none_creator__returns_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. _map_check_run_state — UK-7 mapping table
+# 2. _map_check_run_state tests removed per 03-wr-09 — required-check
+#    mapping is no longer the queue's concern (branch protection owns it).
 # ---------------------------------------------------------------------------
-
-
-def test_map_check_run_state__completed_success() -> None:
-    """status=completed, conclusion=success → 'success'."""
-    assert _map_check_run_state("completed", "success") == "success"
-
-
-def test_map_check_run_state__completed_failure() -> None:
-    """failure / timed_out / action_required / cancelled → 'failure'."""
-    assert _map_check_run_state("completed", "failure") == "failure"
-    assert _map_check_run_state("completed", "timed_out") == "failure"
-    assert _map_check_run_state("completed", "action_required") == "failure"
-    assert _map_check_run_state("completed", "cancelled") == "failure"
-
-
-def test_map_check_run_state__not_completed() -> None:
-    """Not yet completed → 'pending', regardless of conclusion."""
-    assert _map_check_run_state("queued", None) == "pending"
-    assert _map_check_run_state("in_progress", None) == "pending"
-    assert _map_check_run_state("waiting", None) == "pending"
-
-
-def test_map_check_run_state__neutral_skipped() -> None:
-    """neutral / skipped → 'neutral'."""
-    assert _map_check_run_state("completed", "neutral") == "neutral"
-    assert _map_check_run_state("completed", "skipped") == "neutral"
-
-
-def test_map_check_run_state__completed_none_conclusion() -> None:
-    """Defensive: completed with no conclusion → 'error' (anomalous state)."""
-    # GitHub should not return this combination; we map it to 'error' so the
-    # decision layer treats the check as failing rather than missing.
-    assert _map_check_run_state("completed", None) == "error"
 
 
 # ---------------------------------------------------------------------------
@@ -235,9 +198,6 @@ def _arm_single_pr(
         [SimpleNamespace(filename=f) for f in (files or [])]
     )
     rest.repos.list_commit_statuses_for_ref.return_value = _resp(statuses or [])
-    rest.checks.list_for_ref.return_value = _resp(
-        SimpleNamespace(total_count=0, check_runs=[])
-    )
     rest.issues.list_events_for_timeline.return_value = _resp(timeline_events or [])
 
     # Make queue_name available for the caller (unused here but documents intent).
@@ -395,30 +355,9 @@ def test_build_snapshot__search_total_count_exceeds_items__raises() -> None:
         build_snapshot(client, config, owner="SamuelReeder", repo="rocm-libraries")
 
 
-def test_build_snapshot__combines_check_runs_and_commit_statuses() -> None:
-    """OQ-4: required_check_results carries entries from BOTH check runs AND statuses."""
-    client = _FakeClient()
-    config = canonical_merge_queue_config()
-
-    bot_creator = _simple_user(login="rocm-mq[bot]", type_="Bot")
-    status_check = _status(context="CI / external", state="success", creator=bot_creator)
-    check_run = _check_run(name="TheRock / build", status="completed", conclusion="success")
-
-    _arm_single_pr(
-        client.rest,
-        pr_number=46,
-        head_sha="ccc0002",
-        labels=["mq:queued", "mq:hipdnn"],
-        statuses=[status_check],
-    )
-    client.rest.checks.list_for_ref.return_value = _resp(
-        SimpleNamespace(total_count=1, check_runs=[check_run])
-    )
-
-    snap = build_snapshot(client, config, owner="SamuelReeder", repo="rocm-libraries")
-    names = {c.name for c in snap.prs[0].required_check_results}
-    assert "CI / external" in names  # from commit statuses
-    assert "TheRock / build" in names  # from check runs
+# (test_build_snapshot__combines_check_runs_and_commit_statuses removed per
+# 03-wr-09: check_runs are no longer loaded into required_check_results;
+# branch protection is the source of truth.)
 
 
 def test_build_snapshot__deduplicates_pr_across_queue_searches() -> None:
@@ -435,9 +374,6 @@ def test_build_snapshot__deduplicates_pr_across_queue_searches() -> None:
     pr_obj = _pr(number=47, head_sha="ddd", labels=["mq:queued", "mq:hipdnn"])
     client.rest.pulls.get.return_value = _resp(pr_obj)
     client.rest.repos.list_commit_statuses_for_ref.return_value = _resp([])
-    client.rest.checks.list_for_ref.return_value = _resp(
-        SimpleNamespace(total_count=0, check_runs=[])
-    )
     client.rest.issues.list_events_for_timeline.return_value = _resp([])
 
     snap = build_snapshot(client, config, owner="SamuelReeder", repo="rocm-libraries")
@@ -460,14 +396,12 @@ def test_make_raw_pr_state__assembles_frozen_dataclass() -> None:
     statuses = [_status(context="merge-queue/active", state="success", creator=bot_creator)]
     bot_actor = _simple_user(login="rocm-mq[bot]", type_="Bot", id_=CANONICAL_APP.bot_user_id)
     timeline = [_label_event(label_name=config.queued_label, actor=bot_actor)]
-    checks = [_check_run(name="ci/build", status="completed", conclusion="success")]
     files: list[str] = []
 
     raw = _make_raw_pr_state(
         pr=pr_obj,
         statuses=statuses,
         timeline=timeline,
-        checks=checks,
         files=files,
         config=config,
     )
@@ -478,5 +412,4 @@ def test_make_raw_pr_state__assembles_frozen_dataclass() -> None:
     assert len(raw.head_statuses) == 1
     assert raw.head_statuses[0].creator.app_id == CANONICAL_APP.app_id
     assert len(raw.mq_queued_label_events) == 1
-    assert any(c.name == "ci/build" for c in raw.required_check_results)
     assert raw.changed_paths == ()

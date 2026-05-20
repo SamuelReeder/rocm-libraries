@@ -5,11 +5,7 @@
   
   Activated on head SHA `abc1234abc1234abc1234abc1234abc1234abc12`.
   
-  | Check | Status |
-  |---|---|
-  | TheRock / build | pending |
-  | TheRock / unit-tests | success |
-  | CI / integration | pending |
+  _Required CI checks are enforced by branch protection — see the PR's checks panel for live state._
   _Updated 2026-04-22 15:26 UTC._
   Last processed: [run](https://github.com/SamuelReeder/rocm-libraries/actions/runs/1234568)
   

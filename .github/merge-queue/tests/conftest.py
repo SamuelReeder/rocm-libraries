@@ -30,7 +30,6 @@ from rocm_mq.state import (
     MergeQueueConfig,
     PRState,
     RenderContext,
-    RequiredCheckResult,
 )
 
 # ---------------------------------------------------------------------------
@@ -305,17 +304,6 @@ def non_canonical_creator(
 
 
 # ---------------------------------------------------------------------------
-# Helper for constructing required check tuples
-# ---------------------------------------------------------------------------
-
-
-def _make_required_checks(
-    *names_states: tuple[str, str],
-) -> tuple[RequiredCheckResult, ...]:
-    return tuple(RequiredCheckResult(name=n, state=s) for n, s in names_states)
-
-
-# ---------------------------------------------------------------------------
 # Per-state PR fixtures (Plan 03 renderer test scenarios)
 #
 # These are realistic instances matching the scenario descriptions in PLAN.md
@@ -333,10 +321,6 @@ def pr_state__miopen_pr_queued_position_2_of_3() -> PRState:
         queues=frozenset({"miopen-provider"}),
         enqueued_at=utc(2026, 4, 22, 14, 10),
         is_validly_active=False,
-        required_check_results=_make_required_checks(
-            ("TheRock / build", "pending"),
-            ("CI / unit-tests", "pending"),
-        ),
     )
 
 
@@ -385,11 +369,6 @@ def pr_state__core_pr_active_checks_pending() -> PRState:
         ),
         enqueued_at=utc(2026, 4, 22, 9, 5),
         is_validly_active=True,
-        required_check_results=_make_required_checks(
-            ("TheRock / build", "pending"),
-            ("TheRock / unit-tests", "success"),
-            ("CI / integration", "pending"),
-        ),
     )
 
 
@@ -425,11 +404,6 @@ def pr_state__core_pr_merged() -> PRState:
         queues=frozenset(),
         enqueued_at=utc(2026, 4, 22, 9, 5),
         is_validly_active=False,
-        required_check_results=_make_required_checks(
-            ("TheRock / build", "success"),
-            ("TheRock / unit-tests", "success"),
-            ("CI / integration", "success"),
-        ),
     )
 
 
@@ -458,11 +432,6 @@ def pr_state__core_pr_ejected_ci_failure() -> PRState:
         queues=frozenset({"hipdnn"}),
         enqueued_at=utc(2026, 4, 22, 9, 5),
         is_validly_active=True,
-        required_check_results=_make_required_checks(
-            ("TheRock / build", "failure"),
-            ("TheRock / unit-tests", "success"),
-            ("CI / integration", "pending"),
-        ),
     )
 
 
@@ -491,9 +460,6 @@ def pr_state__core_pr_ejected_approval_revoked() -> PRState:
         queues=frozenset({"hipdnn"}),
         enqueued_at=utc(2026, 4, 22, 9, 5),
         is_validly_active=False,
-        required_check_results=_make_required_checks(
-            ("TheRock / build", "success"),
-        ),
     )
 
 

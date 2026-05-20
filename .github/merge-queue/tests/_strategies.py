@@ -25,7 +25,6 @@ from rocm_mq.state import (
     LabelEvent,
     MergeQueueConfig,
     RawPRState,
-    RequiredCheckResult,
     TimelineActor,
 )
 
@@ -217,17 +216,8 @@ def label_event_strategy(
     )
 
 
-# ---------------------------------------------------------------------------
-# RequiredCheckResult strategy
-# ---------------------------------------------------------------------------
-
-
-def _required_check_strategy() -> st.SearchStrategy[RequiredCheckResult]:
-    return st.builds(
-        RequiredCheckResult,
-        name=st.sampled_from(["TheRock / build", "CI / unit-tests", "CI / integration"]),
-        state=st.sampled_from(["pending", "success", "failure", "error", "neutral"]),
-    )
+# (RequiredCheckResult strategy removed per 03-wr-09 — required-check
+# evaluation is delegated to GitHub branch protection.)
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +263,6 @@ def raw_pr_strategy() -> st.SearchStrategy[RawPRState]:
     - ~50% chance of App-applied mq:queued event (so derive_pr succeeds)
     - ~30% chance of right-context+canonical-creator merge-queue/active status
       (so some PRs are validly active for the no-squash-without-activation invariant)
-    - Includes required_check_results variety (pending/success/failure)
     """
     from tests.conftest import canonical_merge_queue_config
 
@@ -326,17 +315,12 @@ def raw_pr_strategy() -> st.SearchStrategy[RawPRState]:
         extra_statuses = draw(st.lists(_commit_status_strategy(), min_size=0, max_size=2))
         head_statuses.extend(extra_statuses)
 
-        required_checks = draw(
-            st.lists(_required_check_strategy(), min_size=0, max_size=3).map(tuple)
-        )
-
         return RawPRState(
             number=number,
             head_sha=head_sha,
             labels=frozenset(base_labels),
             head_statuses=tuple(head_statuses),
             mq_queued_label_events=tuple(app_queued_events),
-            required_check_results=required_checks,
             changed_paths=(),  # not read by decide_cycle
         )
 
@@ -398,7 +382,6 @@ def raw_pr_with_forged_activation_status_strategy() -> st.SearchStrategy[RawPRSt
             labels=frozenset(base_labels),
             head_statuses=(forged_status,),
             mq_queued_label_events=(app_queued_event,),
-            required_check_results=(),
             changed_paths=(),
         )
 

@@ -392,53 +392,11 @@ def test_run_scenario_timeline_contains_required_checks_failed_event(
     assert _CANARY_SUBSTRING in json.dumps(failed_evt)
 
 
-# ---------------------------------------------------------------------------
-# YAML-derived expected outcome — verifies the driver reads check name at
-# runtime instead of hardcoding it.
-# ---------------------------------------------------------------------------
-
-
-def test_expected_outcome_derived_from_yaml_payload(
-    monkeypatch: pytest.MonkeyPatch,
-    fake_state: FakeRepoState,
-    tmp_path: Path,
-) -> None:
-    """If the YAML pins a DIFFERENT check name, the driver picks it up.
-
-    Guards against a regression where the driver hardcodes
-    ``mq-dogfood-canary`` (or similar) instead of reading the runtime config.
-    """
-    _patch_timing(monkeypatch)
-    custom_check = "renamed-canary / check"
-    custom_yaml = (
-        "queues: [dogfood-canary]\n"
-        "paths:\n"
-        "  - path: dogfood/\n"
-        "    queues: [dogfood-canary]\n"
-        "required_checks:\n"
-        f"  dogfood-canary: ['{custom_check}']\n"
-    )
-    eject_body = (
-        f"<!-- rocm-mq-status -->\nEjected: `{custom_check}` failed\n"
-    )
-    client = _DogfoodFake(
-        fake_state,
-        eject_comment_body=eject_body,
-        yaml_payload=custom_yaml,
-    )
-
-    result = dog_03.run_scenario(
-        client,
-        owner="owner",
-        repo="repo",
-        output_dir=tmp_path,
-        poll_interval_s=0,
-        inject_eject_after=client.inject_eject_comment,
-    )
-
-    assert result.passed is True
-    assert "renamed-canary" in result.expected_outcome["reason_substring"]
-    assert "renamed-canary" in result.observed_outcome["reason"]
+# (test_expected_outcome_derived_from_yaml_payload removed per 03-wr-09 —
+# the driver no longer reads the canary check name from the YAML's
+# required_checks map (that map was deleted). The canary name is now a
+# module constant in dog_03; test_dog_03_canary_check_name_pins_load_bearing_prefix
+# below pins that contract.)
 
 
 # ---------------------------------------------------------------------------
@@ -448,25 +406,15 @@ def test_expected_outcome_derived_from_yaml_payload(
 # ---------------------------------------------------------------------------
 
 
-def test_real_path_to_queues_yaml_pins_canary_check() -> None:
-    """The real path_to_queues.yml must keep a dogfood-canary required-check."""
-    candidates = [
-        Path("../merge-queue/path_to_queues.yml"),
-        Path(".github/merge-queue/path_to_queues.yml"),
-    ]
-    yml = next((c for c in candidates if c.exists()), None)
-    if yml is None:
-        repo_root = Path(__file__).resolve().parents[3]
-        yml = repo_root / ".github/merge-queue/path_to_queues.yml"
-    if not yml.exists():
-        pytest.skip("path_to_queues.yml not present at any expected location")
-
-    parsed = yaml.safe_load(yml.read_text(encoding="utf-8"))
-    checks = parsed.get("required_checks", {}).get("dogfood-canary", [])
-    assert checks, "dogfood-canary required_checks must be non-empty"
-    # The driver substring-matches on a shorter slice; assert the YAML pin
-    # contains the load-bearing prefix so the driver assertions remain valid.
-    assert any("mq-dogfood-canary" in c for c in checks), (
-        f"dogfood-canary required_checks {checks!r} no longer contains the "
-        "'mq-dogfood-canary' prefix; update dog_03 driver or re-pin YAML."
+def test_dog_03_canary_check_name_pins_load_bearing_prefix() -> None:
+    """The dog_03 module-level canary name constant must contain the
+    load-bearing 'mq-dogfood-canary' substring (the substring the eject-
+    reason match uses). Post 03-wr-09 the canary name lives in the driver
+    module, not in path_to_queues.yml; this test guards against the
+    constant drifting out of alignment with the canary workflow."""
+    from rocm_mq.dogfood.dog_03 import _CANARY_CHECK_NAME
+    assert "mq-dogfood-canary" in _CANARY_CHECK_NAME, (
+        f"_CANARY_CHECK_NAME={_CANARY_CHECK_NAME!r} no longer contains the "
+        "'mq-dogfood-canary' prefix; update dog_03 driver or re-name the "
+        "canary workflow file."
     )

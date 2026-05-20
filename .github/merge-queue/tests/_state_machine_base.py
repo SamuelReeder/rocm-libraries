@@ -169,7 +169,6 @@ class MergeQueueStateMachineBase(RuleBasedStateMachine):
             labels=raw_pr.labels,
             head_statuses=raw_pr.head_statuses,
             mq_queued_label_events=normalized_events,
-            required_check_results=raw_pr.required_check_results,
             changed_paths=raw_pr.changed_paths,
         )
 
@@ -192,7 +191,6 @@ class MergeQueueStateMachineBase(RuleBasedStateMachine):
                 labels=raw_pr.labels,
                 head_statuses=raw_pr.head_statuses,
                 mq_queued_label_events=(),  # timeline not visible yet
-                required_check_results=raw_pr.required_check_results,
                 changed_paths=raw_pr.changed_paths,
             )
             self.shadow_raw_prs[number] = raw_without_event
@@ -251,7 +249,6 @@ class MergeQueueStateMachineBase(RuleBasedStateMachine):
             labels=new_labels,
             head_statuses=new_statuses,
             mq_queued_label_events=existing_raw.mq_queued_label_events,
-            required_check_results=existing_raw.required_check_results,
             changed_paths=existing_raw.changed_paths,
         )
         self.shadow_raw_prs[number] = updated_raw
@@ -296,7 +293,6 @@ class MergeQueueStateMachineBase(RuleBasedStateMachine):
             labels=existing_raw.labels,
             head_statuses=existing_raw.head_statuses,
             mq_queued_label_events=(*existing_raw.mq_queued_label_events, deferred_event),
-            required_check_results=existing_raw.required_check_results,
             changed_paths=existing_raw.changed_paths,
         )
         self.shadow_raw_prs[number] = promoted_raw
@@ -393,7 +389,6 @@ class MergeQueueStateMachineBase(RuleBasedStateMachine):
                     labels=new_labels,
                     head_statuses=(*existing_raw.head_statuses, canonical_status),
                     mq_queued_label_events=existing_raw.mq_queued_label_events,
-                    required_check_results=existing_raw.required_check_results,
                     changed_paths=existing_raw.changed_paths,
                 )
                 self.shadow_raw_prs[pr_num] = updated_raw
