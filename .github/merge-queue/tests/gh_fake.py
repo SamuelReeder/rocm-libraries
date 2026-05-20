@@ -62,6 +62,11 @@ class FakePR:
     maintainer_can_modify: bool = True
     reviews: list[dict[str, str]] = field(default_factory=list)
     """List of review dicts {state: APPROVED|CHANGES_REQUESTED|COMMENTED, user_login: ...}."""
+    # 03-wr-08 (cross-repo gate scoping): if head/base repos differ, the
+    # maintainer-edits gate fires; otherwise it's a no-op (matches real
+    # GitHub semantics for same-repo PRs).
+    head_repo_id: int = 1
+    base_repo_id: int = 1
 
 
 @dataclass
@@ -526,7 +531,13 @@ class _PullsNS:
         return _resp(
             SimpleNamespace(
                 number=pr.number,
-                head=SimpleNamespace(sha=pr.head_sha),
+                head=SimpleNamespace(
+                    sha=pr.head_sha,
+                    repo=SimpleNamespace(id=pr.head_repo_id),
+                ),
+                base=SimpleNamespace(
+                    repo=SimpleNamespace(id=pr.base_repo_id),
+                ),
                 labels=[SimpleNamespace(name=n) for n in sorted(pr.labels)],
                 user=SimpleNamespace(login=pr.user_login),
                 maintainer_can_modify=pr.maintainer_can_modify,

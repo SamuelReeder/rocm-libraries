@@ -119,6 +119,7 @@ def _seed_pr(
     reviews: list[dict[str, str]] | None = None,
     combined_status: str = "success",
     combined_statuses: list[dict[str, str]] | None = None,
+    is_cross_repo: bool = False,
 ) -> FakePR:
     pr = FakePR(
         number=number,
@@ -128,6 +129,8 @@ def _seed_pr(
         user_login=user_login,
         maintainer_can_modify=maintainer_can_modify,
         reviews=reviews if reviews is not None else [{"state": "APPROVED", "user_login": "rev1"}],
+        head_repo_id=2 if is_cross_repo else 1,
+        base_repo_id=1,
     )
     state.prs[number] = pr
     state.combined_statuses[head_sha] = {
@@ -336,12 +339,30 @@ class TestAtEnqueueGates:
     def test_fails_on_maintainer_edits_disabled(
         self, fake_client: FakeGitHub, fake_state: FakeRepoState
     ) -> None:
-        _seed_pr(fake_state, maintainer_can_modify=False)
+        # is_cross_repo=True is required to trigger the maintainer-edits
+        # gate (03-wr-08): the field is only meaningful when head/base
+        # live in different repos. Same-repo PRs return False by default
+        # on GitHub but the field has no real meaning there.
+        _seed_pr(fake_state, maintainer_can_modify=False, is_cross_repo=True)
         pr = fake_client.rest.pulls.get("o", "r", 7).parsed_data
         fails = cmd_handle._check_at_enqueue_gates(
             fake_client, "o", "r", 7, pr, queues=frozenset({"hipdnn"})
         )
         assert "maintainer-edits-disabled" in fails
+
+    def test_same_repo_pr_with_maintainer_edits_false_is_noop(
+        self, fake_client: FakeGitHub, fake_state: FakeRepoState
+    ) -> None:
+        """Same-repo PR with maintainer_can_modify=False must NOT trip the
+        gate. GitHub returns False by default for same-repo PRs (the field
+        is semantically meaningless there); gating on it would block every
+        single-repo PR that legitimately wants to merge through the queue."""
+        _seed_pr(fake_state, maintainer_can_modify=False, is_cross_repo=False)
+        pr = fake_client.rest.pulls.get("o", "r", 7).parsed_data
+        fails = cmd_handle._check_at_enqueue_gates(
+            fake_client, "o", "r", 7, pr, queues=frozenset({"hipdnn"})
+        )
+        assert "maintainer-edits-disabled" not in fails
 
     def test_fails_on_empty_queue_set(
         self, fake_client: FakeGitHub, fake_state: FakeRepoState

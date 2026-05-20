@@ -241,7 +241,29 @@ def _check_at_enqueue_gates(
     if not queues:
         failed.append("empty-queue-set")
 
-    if not getattr(pr, "maintainer_can_modify", True):
+    # The `maintainer_can_modify` field is semantically only meaningful for
+    # cross-repo PRs (head and base live in different repositories). For
+    # same-repo PRs GitHub returns `false` by default — the field has no
+    # real meaning because the PR head IS in the maintainer's repo. Gating
+    # on it for same-repo PRs trips drivers that legitimately need to
+    # merge through the queue. Restrict the check to cross-repo PRs where
+    # the field carries real signal (the fork author must opt-in to let
+    # the upstream maintainer push to their branch for the queue's
+    # develop-merge step). Discovered live by dog_04 against the fork
+    # (same-repo PRs returned `maintainer_can_modify=false` despite the
+    # driver explicitly requesting `true`).
+    head_repo_id = getattr(
+        getattr(getattr(pr, "head", None), "repo", None), "id", None
+    )
+    base_repo_id = getattr(
+        getattr(getattr(pr, "base", None), "repo", None), "id", None
+    )
+    is_cross_repo = (
+        head_repo_id is not None
+        and base_repo_id is not None
+        and head_repo_id != base_repo_id
+    )
+    if is_cross_repo and not getattr(pr, "maintainer_can_modify", True):
         failed.append("maintainer-edits-disabled")
 
     # DOGFOOD-ONLY (2026-05-20): no-approval gate disabled for fork dogfood.
