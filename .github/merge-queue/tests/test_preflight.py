@@ -36,9 +36,7 @@ from tests.gh_fake import FakeGitHub, FakeRepoState
 # ---------------------------------------------------------------------------
 
 
-def _patch_repos_get_default_branch(
-    fake: FakeGitHub, *, default_branch: str
-) -> None:
+def _patch_repos_get_default_branch(fake: FakeGitHub, *, default_branch: str) -> None:
     """Add a ``repos.get(owner, repo)`` method to the fake returning default_branch.
 
     The base FakeGitHub does not model the repos.get metadata call; this
@@ -47,9 +45,7 @@ def _patch_repos_get_default_branch(
     """
 
     def get(owner: str, repo: str, **_: object) -> SimpleNamespace:
-        return SimpleNamespace(
-            parsed_data=SimpleNamespace(default_branch=default_branch)
-        )
+        return SimpleNamespace(parsed_data=SimpleNamespace(default_branch=default_branch))
 
     fake.rest.repos.get = get  # type: ignore[attr-defined]
 
@@ -74,22 +70,16 @@ def _patch_repos_get_content_ok(
         ref: str = "",
         **_: object,
     ) -> SimpleNamespace:
-        call_log.append(
-            {"owner": owner, "repo": repo, "path": content_path, "ref": ref}
-        )
+        call_log.append({"owner": owner, "repo": repo, "path": content_path, "ref": ref})
         if content_path != path:
-            raise AssertionError(
-                f"unexpected path {content_path!r}; seeded {path!r}"
-            )
+            raise AssertionError(f"unexpected path {content_path!r}; seeded {path!r}")
         return SimpleNamespace(parsed_data=SimpleNamespace(content=encoded))
 
     fake.rest.repos.get_content = get_content  # type: ignore[attr-defined]
     return call_log
 
 
-def _patch_repos_get_content_raises(
-    fake: FakeGitHub, *, exc: Exception
-) -> None:
+def _patch_repos_get_content_raises(fake: FakeGitHub, *, exc: Exception) -> None:
     """Add a ``repos.get_content`` that always raises ``exc`` to simulate API errors."""
 
     def get_content(*args: object, **kwargs: object) -> SimpleNamespace:
