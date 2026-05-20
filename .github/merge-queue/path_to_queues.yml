@@ -1,0 +1,96 @@
+# .github/merge-queue/path_to_queues.yml
+#
+# Federated merge-queue path-to-queue routing config (RFC 0001 §4.1, §4.8).
+# Loaded by the handler and processor from the develop ref via the GitHub
+# Contents API + yaml.safe_load — see rocm_mq.config.load_from_develop.
+#
+# This file is in SELF_BOOTSTRAP_PATHS (rocm_mq.config.SELF_BOOTSTRAP_PATHS).
+# /merge on any PR whose changed-file set intersects this path is REJECTED
+# by the handler with an explanatory comment; landing edits requires manual
+# maintainer merge (RFC §8 self-bootstrap protection).
+#
+# Scope (RFC §4.1 v1): hipDNN core + four providers + integration-tests.
+# Plus one synthetic `dogfood-canary` queue gated to `dogfood/**` paths so
+# DOG-03's deterministic CI-fail signal exercises required-check semantics
+# without polluting real-code routing. Phase 5 porting-prep STRIPS the
+# dogfood-canary queue + the dogfood/ path entry + the dogfood-canary
+# required_checks entry for the upstream-bound config (CONTEXT.md
+# `<specifics>`).
+#
+# Required-check context names verified live against fork PR #21 head SHA
+# 04070ca96b77e75d180f09dd673e4c343260a8c6 (plan 03-03 Task 2):
+#   gh api repos/SamuelReeder/rocm-libraries/commits/<sha>/check-runs
+#   → {"app": "github-actions", "name": "TheRock CI Summary", ...}
+# matches `.github/workflows/therock-ci.yml` line 171 (`name: TheRock CI Summary`).
+#
+# Schema validation (graph closure of upstream/downstream queue membership,
+# required-check format, queue-name lexical rules) is Phase 4
+# (mq-config-validate.yml). This file is trusted-but-attested today: the
+# develop branch is branch-protected, edits land via maintainer merge only.
+
+queues:
+  - hipdnn
+  - miopen-provider
+  - hipblaslt-provider
+  - hip-kernel-provider
+  - fusilli-provider
+  - integration-tests
+  # SYNTHETIC — Phase 5 porting-prep strips this for upstream (RFC §4.1 v1 scope is hipDNN ecosystem only)
+  - dogfood-canary
+
+paths:
+  # hipDNN core change → blocks everything downstream (all five providers + integration-tests).
+  - path: projects/hipdnn/
+    queues:
+      - hipdnn
+      - miopen-provider
+      - hipblaslt-provider
+      - hip-kernel-provider
+      - fusilli-provider
+      - integration-tests
+
+  # Each provider change only blocks its own queue (no cross-provider coupling).
+  - path: dnn-providers/miopen-provider/
+    queues: [miopen-provider]
+  - path: dnn-providers/hipblaslt-provider/
+    queues: [hipblaslt-provider]
+  - path: dnn-providers/hip-kernel-provider/
+    queues: [hip-kernel-provider]
+  - path: dnn-providers/fusilli-provider/
+    queues: [fusilli-provider]
+
+  # integration-tests changes block every provider + integration-tests (RFC §4.2 asymmetric edge).
+  - path: dnn-providers/integration-tests/
+    queues:
+      - miopen-provider
+      - hipblaslt-provider
+      - hip-kernel-provider
+      - fusilli-provider
+      - integration-tests
+
+  # SYNTHETIC — Phase 5 porting-prep strips this for upstream.
+  # Dedicated path for the DOG-03 dogfood canary; the canary workflow
+  # (mq-dogfood-canary.yml, plan 03-09) triggers on `paths: ['dogfood/**']`
+  # and reads the PR title for the literal `[dogfood-ci-fail]` to decide
+  # exit 0 vs exit 1.
+  - path: dogfood/
+    queues: [dogfood-canary]
+
+required_checks:
+  # Production queues — `TheRock CI Summary` is the existing fork-side
+  # required check (.github/workflows/therock-ci.yml job name; verified
+  # live on PR #21 head SHA, plan 03-03 Task 2).
+  hipdnn: ["TheRock CI Summary"]
+  miopen-provider: ["TheRock CI Summary"]
+  hipblaslt-provider: ["TheRock CI Summary"]
+  hip-kernel-provider: ["TheRock CI Summary"]
+  fusilli-provider: ["TheRock CI Summary"]
+  integration-tests: ["TheRock CI Summary"]
+
+  # SYNTHETIC — Phase 5 porting-prep strips this for upstream.
+  # The canary workflow's check context name is the PLACEHOLDER
+  # "mq-dogfood-canary / canary" — the literal string GitHub registers
+  # against the head SHA depends on the workflow job's `name:` field
+  # (plan 03-09). After plan 03-09's first canary PR runs, the actual
+  # context string MUST be re-verified and pinned here.
+  dogfood-canary: ["mq-dogfood-canary / canary"]
