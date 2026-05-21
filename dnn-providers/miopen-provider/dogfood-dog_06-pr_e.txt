@@ -1,1 +1,0 @@
-dogfood dog_06 PR_E — RFC §4.2 worked example marker file. Same queue as PR_B (miopen-provider) — the RFC §4.2 narrative beat 'E touches a provider in the same queue as something earlier'.

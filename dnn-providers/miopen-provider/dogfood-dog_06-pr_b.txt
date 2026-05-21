@@ -1,1 +1,0 @@
-dogfood dog_06 PR_B — RFC §4.2 worked example marker file. Single-provider queue (miopen-provider). DISJOINT from PR_C — can parallelize after A squashes (RFC §4.2 lines: B and C proceed in parallel because they share no queue).

@@ -12,3 +12,4 @@ CMakeUserPresets.json
 
 # claude tmp files
 .nfs*
+.planning/
