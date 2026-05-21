@@ -95,6 +95,9 @@ from typing import TYPE_CHECKING, Any, TypeVar, assert_never
 # the lint (test_io_modules_do_import_githubkit) passes.
 from githubkit.exception import RequestFailed
 
+from datetime import UTC, datetime
+
+from rocm_mq.comment import render_status_body
 from rocm_mq.gh import CorruptSquashError
 from rocm_mq.state import (
     Action,
@@ -104,6 +107,7 @@ from rocm_mq.state import (
     Eject,
     MergeQueueConfig,
     PRState,
+    RenderContext,
     Squash,
     UpdateComment,
 )
@@ -348,6 +352,19 @@ def _handle_squash(
         )
     except CorruptSquashError as exc:
         return ActionOutcome(action=action, success=False, error_message=str(exc))
+
+    # Update the status comment to reflect the merged state so PR readers see
+    # the final outcome without having to inspect the activation status or
+    # cycle summary.
+    _upsert_status_comment(
+        client,
+        owner,
+        repo,
+        pr,
+        state="merged",
+        eject_reason=None,
+        merged_sha=squash_sha,
+    )
 
     return ActionOutcome(action=action, success=True, error_message=None)
 
@@ -598,7 +615,75 @@ def _handle_eject(
         if label.startswith(config.label_prefix):
             _safe_remove_label(client, owner, repo, pr.number, label)
 
+    # Upsert a user-facing status comment naming the eject reason. Dogfood
+    # drivers (DOG-02/03/05) poll this comment for the reason substring; the
+    # bare activation-status flip + label removal is invisible in the PR UI.
+    _upsert_status_comment(
+        client,
+        owner,
+        repo,
+        pr,
+        state="ejected",
+        eject_reason=reason,
+        merged_sha=None,
+    )
+
     return ActionOutcome(action=action, success=True, error_message=None)
+
+
+def _upsert_status_comment(
+    client: GitHubClient,
+    owner: str,
+    repo: str,
+    pr: PRState,
+    *,
+    state: str,
+    eject_reason: str | None,
+    merged_sha: str | None,
+) -> None:
+    """Render + upsert the rocm-mq status comment for a terminal state.
+
+    Builds a minimal RenderContext (only the fields the ejected / merged body
+    renderers read are populated; queued/active fields stay empty since this
+    helper is only called from terminal processor handlers). The cycle-run URL
+    is sourced from ``GITHUB_SERVER_URL`` + ``GITHUB_RUN_ID`` if present so the
+    comment links back to the cycle that produced it.
+    """
+    import os
+
+    cycle_run_url: str | None = None
+    server = os.environ.get("GITHUB_SERVER_URL")
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    if server and run_id:
+        cycle_run_url = f"{server}/{owner}/{repo}/actions/runs/{run_id}"
+
+    ctx = RenderContext(
+        author_login="",
+        pr_title="",
+        queue_positions=(),
+        blockers=(),
+        cycle_run_url=cycle_run_url,
+        state=state,
+        eject_reason=eject_reason,
+        merged_sha=merged_sha,
+    )
+    body = render_status_body(pr, ctx, datetime.now(tz=UTC))
+    _upsert_comment_body(client, owner, repo, pr.number, body)
+
+
+def _upsert_comment_body(
+    client: GitHubClient,
+    owner: str,
+    repo: str,
+    pr_number: int,
+    body: str,
+) -> None:
+    """Find the existing status comment by marker and update; else create."""
+    comment_id = _find_status_comment_id(client, owner, repo, pr_number)
+    if comment_id is None:
+        client.rest.issues.create_comment(owner, repo, pr_number, body=body)
+    else:
+        client.rest.issues.update_comment(owner, repo, comment_id, body=body)
 
 
 # ---------------------------------------------------------------------------
@@ -621,21 +706,7 @@ def _handle_update_comment(
     exactly (T-02-03-06; cross-referenced in both module docstrings).
     """
     action = UpdateComment(pr=pr, new_body=body)
-    comment_id = _find_status_comment_id(client, owner, repo, pr.number)
-    if comment_id is None:
-        client.rest.issues.create_comment(
-            owner,
-            repo,
-            pr.number,
-            body=body,
-        )
-    else:
-        client.rest.issues.update_comment(
-            owner,
-            repo,
-            comment_id,
-            body=body,
-        )
+    _upsert_comment_body(client, owner, repo, pr.number, body)
     return ActionOutcome(action=action, success=True, error_message=None)
 
 
