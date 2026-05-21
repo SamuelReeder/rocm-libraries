@@ -17,6 +17,13 @@
 # Pitfall 1 (the PR-head-checkout-under-_target trap) by structural
 # impossibility.
 #
+# No `paths:` filter: the canary is the queue's required check for
+# branch protection on develop. If `paths: ['dogfood/**']` were set,
+# non-dogfood PRs would never have the check report and would be
+# permanently blocked from merging by the rule. The canary stays cheap
+# (no secrets, no checkout, decides from event payload) so running on
+# every PR costs ~10s of runner time.
+#
 # Phase 5 porting-prep STRIPS this entire file from the upstream-bound
 # copy (03-CONTEXT.md `<specifics>`); the upstream queue has no synthetic
 # canary requirement.
@@ -26,7 +33,6 @@ name: mq-dogfood-canary
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    paths: ['dogfood/**']
 
 # Workflow-level minimum scope. The canary reads nothing beyond the event
 # payload; `contents: read` is the floor `pull_request` workflows get by
