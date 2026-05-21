@@ -374,9 +374,16 @@ def test_activate__repos_merge_204__uses_current_head_sha() -> None:
     assert ("head_sha_aaa", config.activation_status_context) in fake.state.status_store
 
 
-def test_activate__repos_merge_409__returns_failure_outcome() -> None:
-    """409 conflict on develop→PR merge → ActionOutcome(success=False)."""
+def test_activate__repos_merge_409__ejects_with_documented_reason() -> None:
+    """409 conflict on develop→PR merge → eject with 'merge conflict with develop'.
+
+    RFC §6 DOG-02 documents this exact reason; the eject path stamps a
+    failure activation status, clears any mq:* labels (none in this fixture),
+    and posts a status comment naming the reason so the dogfood driver's
+    polling predicate can match.
+    """
     from rocm_mq import executor
+    from rocm_mq.state import Eject
 
     fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
     _patch_pulls_get_to_return_branch(fake, head_ref="feature-branch")
@@ -397,11 +404,20 @@ def test_activate__repos_merge_409__returns_failure_outcome() -> None:
     )
 
     assert outcome.success is False
-    assert outcome.error_message is not None
-    assert "conflict" in outcome.error_message.lower()
-    # No status stamped, no labels flipped.
-    assert not fake.state.status_store
+    assert isinstance(outcome.action, Eject)
+    assert outcome.action.reason == "merge conflict with develop"
+    # Eject path stamps a failure activation status on the head SHA.
+    key = ("head_sha_aaa", config.activation_status_context)
+    assert key in fake.state.status_store
+    assert fake.state.status_store[key]["state"] == "failure"
+    # No mq:active label flipped (eject path only removes mq:* labels, never adds).
     assert "mq:active" not in fake.state.prs[42].labels
+    # Eject posts a status comment naming the documented reason.
+    pr_comments = fake.state.comments_store.get(42, {})
+    eject_comments = [
+        body for body in pr_comments.values() if "merge conflict with develop" in body
+    ]
+    assert eject_comments, "expected eject status comment with documented reason"
 
 
 def test_activate__pre_stamp_race__author_pushed_between_merge_and_stamp() -> None:

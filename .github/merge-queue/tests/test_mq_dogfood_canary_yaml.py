@@ -7,7 +7,9 @@ makes the rest of the dogfood pipeline correct:
 
   * Triggers on `pull_request` (NOT `pull_request_target`) — sidesteps
     Pitfall 1 because the canary has no secrets, no App token, no checkout.
-  * Filtered to `dogfood/**` paths so real-code PRs are never blocked.
+  * No `paths:` filter — the canary is the queue's required check on
+    develop; scoping it to `dogfood/**` would block every non-dogfood PR
+    from merging because the check would never report on those head SHAs.
   * No `actions/checkout`, no `actions/setup-python`, no
     `actions/create-github-app-token` — the canary decides solely from the
     event payload (PR title substring match).
@@ -78,11 +80,14 @@ def test_trigger_is_pull_request_not_target(doc: dict) -> None:
     assert "pull_request_target" not in on_block
 
 
-def test_trigger_types_and_paths(doc: dict) -> None:
+def test_trigger_types_no_paths_filter(doc: dict) -> None:
+    """`pull_request.types` is pinned; no `paths:` filter so the canary
+    fires on every PR (branch protection on develop requires this check
+    on every merge candidate, not just dogfood/** PRs)."""
     on_block = doc.get("on") if "on" in doc else doc.get(True)
     pr = on_block["pull_request"]
     assert pr["types"] == ["opened", "synchronize", "reopened"]
-    assert pr["paths"] == ["dogfood/**"]
+    assert "paths" not in pr
 
 
 def test_workflow_level_permissions_minimum_scope(doc: dict) -> None:

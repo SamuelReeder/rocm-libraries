@@ -208,12 +208,14 @@ def _handle_activate(
             head=_TRUNK_BRANCH,
         )
     except RequestFailed as exc:
-        # 409 = merge conflict; eject-worthy but we let the caller decide.
+        # 409 = merge conflict at activation; documented eject (RFC §6 DOG-02).
         if _status_code(exc) == 409:
+            reason = "merge conflict with develop"
+            _handle_eject(pr, reason, client, config, owner, repo)
             return ActionOutcome(
-                action=action,
+                action=Eject(pr=pr, reason=reason),
                 success=False,
-                error_message="merge conflict with develop",
+                error_message=f"activation failed → ejected: {reason}",
             )
         raise
 
