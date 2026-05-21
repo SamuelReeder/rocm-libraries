@@ -1,0 +1,1 @@
+dogfood dog_06 PR_A — RFC §4.2 worked example marker file. Engages integration-tests + every provider queue per path_to_queues.yml asymmetric integration-tests edge (RFC §4.2 lines: A blocks everything downstream).
