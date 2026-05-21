@@ -1,8 +1,10 @@
-"""
-test_helpers_parse_gh_timestamp.py — Unit + property tests for ``parse_gh_timestamp``.
+"""Unit + property tests for ``parse_gh_timestamp``.
 
-PURE-06: ``parse_gh_timestamp`` parses ISO 8601 GitHub timestamps into tz-aware
-datetimes and raises ``NaiveDatetimeError`` for naive inputs (Pitfall 3).
+``parse_gh_timestamp`` parses ISO 8601 GitHub timestamps into tz-aware
+datetimes and raises ``NaiveDatetimeError`` for naive inputs. This is the
+single chokepoint for parsing untrusted timestamps into the pure decision
+layer; without it, a naive datetime would silently sort earlier than every
+tz-aware datetime and corrupt FIFO ordering.
 
 Tests:
 1. Round-trip property: tz-aware datetime → isoformat → parse → same datetime.

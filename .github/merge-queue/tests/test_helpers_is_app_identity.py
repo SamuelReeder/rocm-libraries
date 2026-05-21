@@ -1,8 +1,9 @@
-"""
-test_helpers_is_app_identity.py — Unit + property tests for ``is_app_identity``.
+"""Unit + property tests for ``is_app_identity`` (RFC §4.3.1).
 
-PURE-05: ``is_app_identity`` checks ``type == "Bot"`` AND ``app_slug == expected.slug``
-AND ``app_id == expected.app_id`` (triple-check, RFC §4.3.1).
+``is_app_identity`` checks ``type == "Bot"`` AND ``app_slug == expected.slug``
+AND ``app_id == expected.app_id`` (triple-check). Login alone is NEVER
+sufficient — a User-typed impersonator with the App's login string must
+not pass.
 
 Tests:
 1. Parametrized canonical + 5 non-canonical fixture variants (6 parametrized cases).

@@ -1,17 +1,19 @@
-"""
-test_invariant_idempotent_re_enqueue.py — RFC §6 invariant 3: Idempotent re-enqueue.
+"""RFC §6 invariant: idempotent re-enqueue.
 
 Two sub-invariants:
-1. decide_cycle is a pure function: calling it twice on the same snapshot with the
-   same arguments returns canonically equal action lists (no non-determinism).
-2. No double-activate: a PR that already has mq:active in its labels does NOT
-   receive a second Activate action in the same cycle (the mandatory `continue`
-   in 5a prevents this per RFC §4.6).
+1. decide_cycle is a pure function: calling it twice on the same snapshot
+   with the same arguments returns canonically equal action lists (no
+   non-determinism).
+2. No double-activate: a PR that already has mq:active in its labels does
+   NOT receive a second Activate action in the same cycle (the mandatory
+   `continue` in 5a prevents this per RFC §4.6).
 
-Uses RuleBasedStateMachine + shadow-state pattern (Pitfall 11).
-@invariant reads only self.shadow_* — never self.prs (the Bundle).
+Uses RuleBasedStateMachine + shadow-state pattern. @invariant methods read
+only self.shadow_* — never self.prs (the Hypothesis Bundle) — because
+Bundle reads inside @invariant are not safe under Hypothesis's shrinker.
 
-The state machine class is named IdempotentReEnqueueMachine (no Test prefix).
+The state machine class is named IdempotentReEnqueueMachine (no Test prefix)
+so pytest does not try to collect it directly as a test class.
 """
 
 from __future__ import annotations

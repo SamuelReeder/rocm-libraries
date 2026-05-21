@@ -111,8 +111,7 @@ def process_cycle(
          outcomes. No dispatch.
       5. Otherwise: ``dispatch(action, client=..., config=..., owner=...,
          repo=...)`` per action. Collect outcomes.
-      6. Render the cycle summary and write it to TWO sinks
-         (RESEARCH.md Area #11):
+      6. Render the cycle summary and write it to TWO sinks:
            - append to ``$GITHUB_STEP_SUMMARY`` (if set — automatic in
              GHA runners) for the per-run Actions UI summary panel;
            - OVERWRITE the file at ``$MQ_CYCLE_SUMMARY_PATH`` (default

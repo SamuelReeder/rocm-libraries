@@ -1,5 +1,4 @@
-"""
-test_invariant_fifo.py — RFC §6 invariant 2: FIFO ordering.
+"""RFC §6 invariant: FIFO ordering within a queue.
 
 Invariant: Within a single queue, the order in which PRs receive Activate
 actions respects their enqueued_at order WHEN VISIBLE IN THE SAME CYCLE.
@@ -11,14 +10,16 @@ Two FIFO invariants:
 2. Within-cycle uniqueness: at most one PR per queue is Activated in a single
    cycle (only the head can be activated).
 
-NOTE on timeline lag: The RFC's FIFO guarantee applies within a single cycle's
-visible snapshot. A PR with an earlier enqueued_at may enter shadow_prs AFTER
-an Activate was already issued for a later-timestamped PR (Pitfall 4 — timeline
-lag). The cross-cycle activation history is therefore NOT required to be globally
-monotone; only the within-cycle ordering is invariant-testable.
+NOTE on timeline lag: The RFC's FIFO guarantee applies within a single
+cycle's visible snapshot. A PR with an earlier enqueued_at may enter
+shadow_prs AFTER an Activate was already issued for a later-timestamped PR
+(label-event timeline visibility lag). The cross-cycle activation history is
+therefore NOT required to be globally monotone; only the within-cycle
+ordering is invariant-testable.
 
-Uses RuleBasedStateMachine + shadow-state pattern (Pitfall 11).
-@invariant reads only self.shadow_* — never self.prs (the Bundle).
+Uses RuleBasedStateMachine + shadow-state pattern. @invariant methods read
+only self.shadow_* — never self.prs (the Hypothesis Bundle) — because
+Bundle reads inside @invariant are not safe under Hypothesis's shrinker.
 
 The state machine class is named FifoMachine (no Test prefix) to prevent
 pytest from attempting to collect it directly as a test class.

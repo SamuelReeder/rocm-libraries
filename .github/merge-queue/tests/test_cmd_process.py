@@ -54,8 +54,9 @@ def _seed_activate_scenario() -> FakeGitHub:
         head_sha="head_sha_42",
         labels={"mq:queued", "mq:miopen-provider"},
     )
-    # Pre-seed the App-applied mq:queued label event so derive_pr's Case 1
-    # path is taken (otherwise Case 2 emits a Defer and no Activate fires).
+    # Pre-seed the App-applied mq:queued label event so derive_pr's normal
+    # path is taken (otherwise the timeline-lag branch emits a Defer and no
+    # Activate fires).
     state.label_log.append(("42", "labeled", "mq:queued"))
     fake = FakeGitHub(state)
     _patch_pulls_get_for_branch_ref(fake, head_ref="feature-branch")
@@ -803,7 +804,11 @@ def test_main_audit_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     err = capsys.readouterr().err
     assert "audit" in err.lower()
-    assert "no-op" in err.lower() or "stub" in err.lower()
+    assert (
+        "no-op" in err.lower()
+        or "stub" in err.lower()
+        or "not yet implemented" in err.lower()
+    )
 
 
 def test_main_handle_dispatches_to_module(

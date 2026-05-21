@@ -1,24 +1,15 @@
 """RFC §4.2 worked-example regression.
 
-The narrative below mirrors the RFC line by line; Q2 resolution: T1 emits
-[Squash(A)] only (per-PR not per-cycle-globally), B/C activations land at T2.
+The 8-timestep narrative below mirrors the RFC §4.2 example line by line.
 
-Open Question 2 (RESEARCH.md): "Worked-example T1: [Squash(A)] alone, or
-[Squash(A), Activate(B), Activate(C)]?"
-Resolution: strict interpretation — T1 produces [Squash(A)] only. The RFC §4.6
-"activation and evaluation never in same cycle" rule applies per-PR, not
-per-cycle-globally. This means in a cycle where A is squashed (evaluation
-happened for A), B and C are at the head of their respective disjoint queues
-and meet the activation criterion — but because A's squash is in the same
-cycle and the algorithm evaluates them in the context of A still present as
-head-of-all, B and C do not yet become heads. In the T1 snapshot, A is still
-mq:active (the executor has not cleaned up yet). After A is squashed and
-removed from the snapshot, the T2 snapshot shows B and C as heads of their
-respective queues. Hence B/C activations land at T2.
-
-Import note: This file imports ``canonical_merge_queue_config`` from
-``tests.conftest`` only (Plan 03 single owning home). It does NOT import
-from the Plan 04 strategy module — Wave 4 parallelism preserved.
+A key behavioural choice this test pins: at T1, the cycle emits [Squash(A)]
+alone (NOT [Squash(A), Activate(B), Activate(C)]). The RFC §4.6 rule
+"activation and evaluation never happen in the same cycle for the same PR"
+applies per-PR, not per-cycle-globally. In the T1 snapshot, A is still
+mq:active (the executor has not cleaned up yet), so B and C are still
+blocked by A as head-of-all in their shared queues. After A is squashed
+and removed from the snapshot, the T2 snapshot shows B and C as heads
+of their respective queues — so B/C activations land at T2.
 """
 
 from __future__ import annotations
@@ -94,15 +85,15 @@ def _make_pr(
 def _active(pr: PRState) -> PRState:
     """Return a copy of ``pr`` modeling "post-Activate next-cycle state".
 
-    Models what the executor + Phase 2 ``derive_pr`` would produce after an
+    Models what the executor + ``derive_pr`` would produce after an
     ``Activate`` action was applied:
     - ``mq:active`` added to labels.
     - ``mq:queued`` removed from labels.
     - ``is_validly_active = True``.
     - Required checks set to ``"success"`` so step 5b dispatches to Squash.
 
-    This is the PRState shape the snapshot would contain in the NEXT cycle after
-    an Activate action was executed by the Phase 2 executor.
+    This is the PRState shape the snapshot would contain in the NEXT cycle
+    after an Activate action was executed by the executor.
     """
     new_labels = (pr.labels - {"mq:queued"}) | {"mq:active"}
     return PRState(
@@ -145,15 +136,17 @@ E = _make_pr(
 
 
 # ---------------------------------------------------------------------------
-# Parametrized 8-timestep regression (PURE-08)
+# Parametrized 8-timestep regression
 #
 # One case per timestep transition. At each timestep, the snapshot reflects the
 # cumulative open-PR set with labels updated from prior cycle outcomes.
 #
-# T2 and T3: set equality (Pitfall 8 — disjoint queue sets, order unspecified).
+# T2 and T3: set equality (RFC §4.6 — order across disjoint queue sets is
+#   implementation-defined; only the set of actions is contract-defined).
 # All other timesteps: list equality (single action or ordered single-queue).
 #
-# Q2 resolution: T1 emits [Squash(A)] only; B/C activations land at T2.
+# T1 emits [Squash(A)] only; B/C activations land at T2 (the "same-cycle
+# activation + evaluation" rule is per-PR, not per-cycle-globally).
 # ---------------------------------------------------------------------------
 
 _CASES = [

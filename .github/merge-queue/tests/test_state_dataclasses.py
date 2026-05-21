@@ -1,14 +1,15 @@
-"""
-test_state_dataclasses.py — Invariant tests for state.py frozen dataclasses.
+"""Invariant tests for state.py frozen dataclasses.
 
-PURE-01: Every dataclass exported from state.py is:
+Every dataclass exported from state.py is:
   1. frozen=True (immutable; auto-generates __hash__ + __eq__)
   2. slots=True (__slots__ defined — catches typo-introduced attribute writes)
   3. Uses no mutable container types (no list[...], set[...], dict[...] field annotations)
   4. Any datetime-annotated field should be tz-aware (documented contract + guard helper)
 
 Also includes:
-  - Anti-Pydantic canary (Pitfall 1): pydantic must not be in sys.modules after import.
+  - Anti-Pydantic canary: pydantic must not appear in sys.modules after importing
+    the public rocm_mq surface — the pure decision layer is dataclass-only
+    by contract.
 """
 
 from __future__ import annotations

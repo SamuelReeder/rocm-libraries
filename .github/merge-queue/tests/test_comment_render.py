@@ -1,7 +1,7 @@
-"""
-tests/test_comment_render.py — Syrupy snapshot tests for comment.render_status_body.
+"""Syrupy snapshot tests for comment.render_status_body.
 
-Coverage: PURE-04 part 1 — status comment rendering for all four PR states.
+Status comment rendering for all four PR states (queued, active, merged,
+ejected — CI failure and approval-revoked variants).
 
 Snapshot update: ``pytest tests/test_comment_render.py --snapshot-update``
 Always review the .ambr diff before committing — the snapshot IS the contract.

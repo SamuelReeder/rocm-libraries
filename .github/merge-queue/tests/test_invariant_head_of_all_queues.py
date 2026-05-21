@@ -1,15 +1,16 @@
-"""
-test_invariant_head_of_all_queues.py — RFC §6 invariant 1: Head-of-all-queues.
+"""RFC §6 invariant: head-of-all-queues.
 
 Invariant: A PR is squash-merged only when it is at position 0 of every queue
 it belongs to immediately before the squash action.
 
-Uses RuleBasedStateMachine + shadow-state pattern (Pitfall 11).
-@invariant reads only self.shadow_* — never self.prs (the Bundle).
+Uses RuleBasedStateMachine + shadow-state pattern. @invariant methods read
+only self.shadow_* — never self.prs (the Hypothesis Bundle) — because
+Bundle reads inside @invariant are not safe under Hypothesis's shrinker.
 
 The state machine class is named HeadOfAllQueuesMachine (no Test prefix) to
-prevent pytest from attempting to collect it directly as a test class. Pytest
-discovers the per-invariant test via TestHeadOfAllQueues_TestCase = Machine.TestCase.
+prevent pytest from attempting to collect it directly as a test class.
+Pytest discovers the per-invariant test via
+TestHeadOfAllQueues_TestCase = Machine.TestCase.
 """
 
 from __future__ import annotations

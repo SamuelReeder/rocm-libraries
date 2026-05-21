@@ -1,7 +1,6 @@
-"""
-tests/test_summary_render.py — Syrupy snapshot tests for summary.render_cycle_summary.
+"""Syrupy snapshot tests for summary.render_cycle_summary.
 
-Coverage: PURE-04 part 2 — cycle summary rendering for empty, mixed, and all-Defer cycles.
+Cycle summary rendering for empty, mixed, and all-Defer cycles.
 
 Snapshot update: ``pytest tests/test_summary_render.py --snapshot-update``
 Always review the .ambr diff before committing — the snapshot IS the contract.
@@ -361,5 +360,7 @@ def test_no_banned_imports_in_summary_module() -> None:
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr in banned_methods:
             pytest.fail(
-                f"summary.py uses banned datetime method: {node.attr} (PURE-09 violation)"
+                f"summary.py uses banned datetime method: {node.attr} "
+                "(pure-layer modules must not parse or read the wall clock; "
+                "all datetimes come pre-parsed via _helpers)"
             )
