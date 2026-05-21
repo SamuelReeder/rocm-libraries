@@ -158,14 +158,30 @@ def create_dogfood_pr(
     )
 
     # 3. Commit the file (base64-encoded content per Contents API spec).
+    # When the path already exists on the branch (e.g., dog_02 seeds develop
+    # with the conflict file before branching), the Contents API requires the
+    # existing blob sha so the call is treated as an update rather than a
+    # (failing) create. The PR branch was just created off develop so any
+    # existing file there shares the develop-tip blob sha.
     encoded = base64.b64encode(file_content.encode("utf-8")).decode("ascii")
+    existing_sha: str | None = None
+    try:
+        gc_resp = client.rest.repos.get_content(owner, repo, file_path, ref=branch)
+        existing_sha = str(getattr(gc_resp.parsed_data, "sha", "")) or None
+    except Exception:
+        existing_sha = None
+    file_kwargs: dict[str, Any] = {
+        "message": f"[dogfood {scenario_id}] seed {file_path}",
+        "content": encoded,
+        "branch": branch,
+    }
+    if existing_sha:
+        file_kwargs["sha"] = existing_sha
     client.rest.repos.create_or_update_file_contents(
         owner,
         repo,
         file_path,
-        message=f"[dogfood {scenario_id}] seed {file_path}",
-        content=encoded,
-        branch=branch,
+        **file_kwargs,
     )
 
     # 4. Open the PR.

@@ -150,15 +150,31 @@ def run_scenario(
     #    (RFC §4.6 activation step). The first-commit-into-develop pattern
     #    is documented as an accepted artifact per T-03-11-01 (threat model).
     seed_content_b64 = base64.b64encode(
-        b"seed-variant-A: chosen at dogfood seed time\n"
+        f"seed-variant-A: chosen at dogfood seed time {started}\n".encode("utf-8")
     ).decode("ascii")
+    # On re-runs the seed file may already exist on develop; fetch its sha so
+    # the contents API treats this as an update rather than a (failing) create.
+    existing_sha: str | None = None
+    try:
+        resp = client.rest.repos.get_content(
+            owner, repo, _CONFLICT_FILE_PATH, ref="develop"
+        )
+        data = resp.parsed_data
+        existing_sha = str(getattr(data, "sha", "")) or None
+    except Exception:
+        existing_sha = None
+    file_kwargs: dict[str, Any] = {
+        "message": f"[dogfood {SCENARIO_ID}] seed develop with conflict bait",
+        "content": seed_content_b64,
+        "branch": "develop",
+    }
+    if existing_sha:
+        file_kwargs["sha"] = existing_sha
     client.rest.repos.create_or_update_file_contents(
         owner,
         repo,
         _CONFLICT_FILE_PATH,
-        message=f"[dogfood {SCENARIO_ID}] seed develop with conflict bait",
-        content=seed_content_b64,
-        branch="develop",
+        **file_kwargs,
     )
 
     # 2. Create the PR (branched off the just-updated develop tip). The PR's
