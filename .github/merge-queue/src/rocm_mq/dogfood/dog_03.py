@@ -106,15 +106,15 @@ _STATUS_MARKER: str = "<!-- rocm-mq-status -->"
 # (the canary workflow listens on these paths).
 _DOGFOOD_QUEUE_KEY: str = "dogfood-canary"
 
-# Canary check-run name. Tied to ``.github/workflows/mq-dogfood-canary.yml``
-# (plan 03-09) — the workflow's job-id is ``canary`` and the workflow name
-# is ``mq-dogfood-canary``, so GHA registers the check-run as
-# ``mq-dogfood-canary / canary``. Post 03-wr-09, required-check evaluation
-# is delegated to branch protection — the queue ejects with whatever check
-# name appears in the merge-API failure message. This driver matches on
-# the GHA-prefix segment (``mq-dogfood-canary``) which is stable against
-# job-id renames within the same workflow file.
-_CANARY_CHECK_NAME: str = "mq-dogfood-canary / canary"
+# Canary check-run name as GHA registers it. The canary job in
+# ``.github/workflows/mq-dogfood-canary.yml`` carries an explicit
+# ``name: mq-dogfood-canary`` field (03-wr-10) so GHA registers the
+# check-run as exactly ``mq-dogfood-canary`` — stable, unique, and
+# what branch protection on develop should require. Post 03-wr-09 the
+# queue ejects with whatever check name appears in the merge-API
+# failure message; this constant pins the substring the driver
+# matches against in the eject reason.
+_CANARY_CHECK_NAME: str = "mq-dogfood-canary"
 
 
 # ---------------------------------------------------------------------------

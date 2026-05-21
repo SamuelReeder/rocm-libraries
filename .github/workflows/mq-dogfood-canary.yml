@@ -36,6 +36,12 @@ permissions:
 
 jobs:
   canary:
+    # Explicit `name:` so GHA registers the check-run as
+    # "mq-dogfood-canary" rather than the bare job-id "canary" (which
+    # would clash with any other workflow that happens to have a job
+    # named `canary`). Branch protection on develop should require this
+    # exact string (03-wr-10 follow-up).
+    name: mq-dogfood-canary
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
