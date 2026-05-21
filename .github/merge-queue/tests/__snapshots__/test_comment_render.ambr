@@ -39,9 +39,11 @@
 # ---
 # name: test_render_status_body_snapshot[merged-core_pr_merged]
   '''
-  ## ✅ Merged
+  ## ✅ Squashed and merged
   
   Squashed to develop as `def5678def5678def5678def5678def5678def5`.
+  
+  _tree_diff_status=ahead (Phase B compare_commits verified)._
   _Updated 2026-04-22 15:26 UTC._
   Last processed: [run](https://github.com/SamuelReeder/rocm-libraries/actions/runs/1234568)
   

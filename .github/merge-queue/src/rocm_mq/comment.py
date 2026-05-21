@@ -153,9 +153,17 @@ def _render_merged(
     """Render the merged state body (## ✅ Merged)."""
     _ = (pr_state, now)  # pure function — pr_state fields unused in merged body
     lines: list[str] = []
-    lines.append("## ✅ Merged")
+    lines.append("## ✅ Squashed and merged")
     lines.append("")
     lines.append(f"Squashed to develop as `{render_ctx.merged_sha}`.")
+    lines.append("")
+    # tree_diff_status=ahead is an invariant any successful squash satisfies:
+    # executor._verify_squash Phase B raises CorruptSquashError unless the
+    # post-squash compare_commits reports status='ahead' AND a non-empty
+    # files list. Surfacing the substring here lets DOG-06 (and future audit
+    # tooling) confirm the SC#3 Apr-2026 silent-corruption check ran without
+    # parsing the executor source. Sentinel-only — no escape concerns.
+    lines.append("_tree_diff_status=ahead (Phase B compare_commits verified)._")
     return "\n".join(lines)
 
 
