@@ -1,1 +1,2 @@
 Throwaway PR to register the mq-dogfood-canary check-run name with GHA so the operator can add it to branch protection on develop. See 03-wr-09 + 03-wr-10 for context.
+register v2 — canary should now report as 'mq-dogfood-canary'
