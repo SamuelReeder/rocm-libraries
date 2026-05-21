@@ -1,0 +1,93 @@
+{
+  "expected_outcome": {
+    "action": "Eject",
+    "reason": "activation invalid (branch updated or label tampered)"
+  },
+  "notes": "Activation observed at head SHA '898f91a0284a0917dc6b6251936bafe545eeb956'; author push wrote 'projects/hipdnn/dogfood-author-push-extra-df32fbef.txt' producing post-push head SHA '310c77e632ada4731a59addef4e6827398271216'. The eject reason is the verbatim RFC \u00a76 / decision.py literal; any drift in the literal would flip passed=False. Live-fork run: the processor cycle URL embedded in the status comment body is the canonical processor_run_url; populate from the comment in a future enhancement if needed.",
+  "observed_outcome": {
+    "action": "Eject",
+    "reason": "activation invalid (branch updated or label tampered)"
+  },
+  "passed": true,
+  "pr_number": 39,
+  "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/39",
+  "processor_run_urls": [],
+  "run_ended_at": "2026-05-21T04:39:30.054389+00:00",
+  "run_started_at": "2026-05-21T04:34:17.664340+00:00",
+  "scenario_id": "dog_05",
+  "step_summary_excerpt": "",
+  "timeline": [
+    [
+      "2026-05-21T04:34:17.664340+00:00",
+      "pr_opened",
+      {
+        "pr_number": 39,
+        "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/39"
+      }
+    ],
+    [
+      "2026-05-21T04:34:17.664340+00:00",
+      "merge_command_posted",
+      {
+        "command": "/merge",
+        "comment_id": 4504846500
+      }
+    ],
+    [
+      "2026-05-21T04:34:17.664340+00:00",
+      "mq_queued_label_applied",
+      {
+        "labels": [
+          "mq:queued"
+        ]
+      }
+    ],
+    [
+      "2026-05-21T04:36:50.511149+00:00",
+      "activation_began",
+      {
+        "derived": "see status comment"
+      }
+    ],
+    [
+      "2026-05-21T04:36:50.511149+00:00",
+      "merge_queue_active_status_posted",
+      {
+        "head_sha_at_activation": "898f91a0284a0917dc6b6251936bafe545eeb956"
+      }
+    ],
+    [
+      "2026-05-21T04:36:50.511149+00:00",
+      "mq_active_label_applied",
+      {
+        "labels": [
+          "mq:active",
+          "mq:hipdnn",
+          "mq:miopen-provider",
+          "mq:hipblaslt-provider",
+          "mq:hip-kernel-provider",
+          "mq:fusilli-provider",
+          "mq:integration-tests",
+          "project: hipdnn"
+        ]
+      }
+    ],
+    [
+      "2026-05-21T04:36:51.701194+00:00",
+      "author_push_after_activation",
+      {
+        "branch": "dogfood/dog_05-9f91ad00",
+        "file_path": "projects/hipdnn/dogfood-author-push-extra-df32fbef.txt",
+        "post_push_head_sha": "310c77e632ada4731a59addef4e6827398271216",
+        "push_commit_sha": "310c77e632ada4731a59addef4e6827398271216"
+      }
+    ],
+    [
+      "2026-05-21T04:39:30.054389+00:00",
+      "ejected",
+      {
+        "reason": "activation invalid (branch updated or label tampered)"
+      }
+    ]
+  ]
+}

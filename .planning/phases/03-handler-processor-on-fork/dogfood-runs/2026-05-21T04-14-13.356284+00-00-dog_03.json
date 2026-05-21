@@ -1,0 +1,81 @@
+{
+  "expected_outcome": {
+    "action": "Eject",
+    "reason_substring": "mq-dogfood-canary"
+  },
+  "notes": "Canary check-name resolved from path_to_queues.yml at runtime: 'mq-dogfood-canary'; eject-reason matched substring 'mq-dogfood-canary'. Live-fork run: the processor cycle URL embedded in the status comment body is the canonical processor_run_url; populate from the comment in a future enhancement if needed.",
+  "observed_outcome": {
+    "action": "Eject",
+    "reason": "mq-dogfood-canary",
+    "reason_full_body": "## \u274c Ejected from merge queue\n\nReason: Repository rule violations found\n\nRequired status check \"mq-dogfood-canary\" is failing.\n\n.\n\nRe-enqueue with `/merge` once addressed.\n_Updated 2026-05-21 04:19 UTC._\nLast processed: [run](https://github.com/SamuelReeder/rocm-libraries/actions/runs/26205151165)\n\n<!-- rocm-mq-status -->"
+  },
+  "passed": true,
+  "pr_number": 37,
+  "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/37",
+  "processor_run_urls": [],
+  "run_ended_at": "2026-05-21T04:19:37.884422+00:00",
+  "run_started_at": "2026-05-21T04:14:13.356284+00:00",
+  "scenario_id": "dog_03",
+  "step_summary_excerpt": "",
+  "timeline": [
+    [
+      "2026-05-21T04:14:13.356284+00:00",
+      "pr_opened",
+      {
+        "pr_number": 37,
+        "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/37"
+      }
+    ],
+    [
+      "2026-05-21T04:14:13.356284+00:00",
+      "merge_command_posted",
+      {
+        "command": "/merge",
+        "comment_id": 4504745059
+      }
+    ],
+    [
+      "2026-05-21T04:14:13.356284+00:00",
+      "mq_queued_label_applied",
+      {
+        "labels": [
+          "mq:queued"
+        ]
+      }
+    ],
+    [
+      "2026-05-21T04:19:37.884422+00:00",
+      "processor_cycle_started",
+      {
+        "derived": "see status comment"
+      }
+    ],
+    [
+      "2026-05-21T04:19:37.884422+00:00",
+      "activation_began",
+      {
+        "derived": "see status comment"
+      }
+    ],
+    [
+      "2026-05-21T04:19:37.884422+00:00",
+      "required_checks_failed",
+      {
+        "canary_check_substring": "mq-dogfood-canary",
+        "failed": [
+          {
+            "conclusion": "failure",
+            "name": "mq-dogfood-canary"
+          }
+        ]
+      }
+    ],
+    [
+      "2026-05-21T04:19:37.884422+00:00",
+      "ejected",
+      {
+        "reason": "mq-dogfood-canary"
+      }
+    ]
+  ]
+}

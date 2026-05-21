@@ -18,17 +18,27 @@ Regenerate via `python -m rocm_mq.dogfood.aggregator` (run from `.github/merge-q
 <a id="dog-02"></a>
 ## DOG-02 — RFC §6 row: merge conflict at activation
 
-**Status:** not yet run
+**Status:** passed
 
-Driver module: `rocm_mq.dogfood.dog_02`. Invoke per CONTEXT.md D-04, then re-run the aggregator.
+- **Latest pass:** `2026-05-21T04:32:53.212433+00:00`
+- **PR:** [#38](https://github.com/SamuelReeder/rocm-libraries/pull/38)
+- **Expected outcome:** `{"action": "Eject", "reason": "merge conflict with develop"}`
+- **Observed outcome:** `{"action": "Eject", "reason": "merge conflict with develop"}`
+- **Source JSON:** [`dogfood-runs/2026-05-21T04-30-46.580255+00-00-dog_02.json`](dogfood-runs/2026-05-21T04-30-46.580255+00-00-dog_02.json)
+- **Notes:** Live-fork run: the processor cycle URL embedded in the status comment body is the canonical processor_run_url; populate from the comment in a future enhancement if needed.
 
 
 <a id="dog-03"></a>
 ## DOG-03 — RFC §6 row: CI failure during evaluation
 
-**Status:** not yet run
+**Status:** passed
 
-Driver module: `rocm_mq.dogfood.dog_03`. Invoke per CONTEXT.md D-04, then re-run the aggregator.
+- **Latest pass:** `2026-05-21T04:19:37.884422+00:00`
+- **PR:** [#37](https://github.com/SamuelReeder/rocm-libraries/pull/37)
+- **Expected outcome:** `{"action": "Eject", "reason_substring": "mq-dogfood-canary"}`
+- **Observed outcome:** `{"action": "Eject", "reason": "mq-dogfood-canary", "reason_full_body": "## \u274c Ejected from merge queue\n\nReason: Repository rule violations found\n\nRequired status check \"mq-dogfood-canary\" is failing.\n\n.\n\nRe-enqueue with `/merge` once addressed.\n_Updated 2026-05-21 04:19 UTC._\nLast processed: [run](https://github.com/SamuelReeder/rocm-libraries/actions/runs/26205151165)\n\n<!-- rocm-mq-status -->"}`
+- **Source JSON:** [`dogfood-runs/2026-05-21T04-14-13.356284+00-00-dog_03.json`](dogfood-runs/2026-05-21T04-14-13.356284+00-00-dog_03.json)
+- **Notes:** Canary check-name resolved from path_to_queues.yml at runtime: 'mq-dogfood-canary'; eject-reason matched substring 'mq-dogfood-canary'. Live-fork run: the processor cycle URL embedded in the status comment body is the canonical processor_run_url; populate from the comment in a future enhancement if needed.
 
 
 <a id="dog-04"></a>
@@ -47,17 +57,27 @@ Driver module: `rocm_mq.dogfood.dog_03`. Invoke per CONTEXT.md D-04, then re-run
 <a id="dog-05"></a>
 ## DOG-05 — RFC §6 row: author push between activation and squash
 
-**Status:** not yet run
+**Status:** passed
 
-Driver module: `rocm_mq.dogfood.dog_05`. Invoke per CONTEXT.md D-04, then re-run the aggregator.
+- **Latest pass:** `2026-05-21T04:39:30.054389+00:00`
+- **PR:** [#39](https://github.com/SamuelReeder/rocm-libraries/pull/39)
+- **Expected outcome:** `{"action": "Eject", "reason": "activation invalid (branch updated or label tampered)"}`
+- **Observed outcome:** `{"action": "Eject", "reason": "activation invalid (branch updated or label tampered)"}`
+- **Source JSON:** [`dogfood-runs/2026-05-21T04-34-17.664340+00-00-dog_05.json`](dogfood-runs/2026-05-21T04-34-17.664340+00-00-dog_05.json)
+- **Notes:** Activation observed at head SHA '898f91a0284a0917dc6b6251936bafe545eeb956'; author push wrote 'projects/hipdnn/dogfood-author-push-extra-df32fbef.txt' producing post-push head SHA '310c77e632ada4731a59addef4e6827398271216'. The eject reason is the verbatim RFC §6 / decision.py literal; any drift in the literal would flip passed=False. Live-fork run: the processor cycle URL embedded in the status comment body is the canonical processor_run_url; populate from the comment in a future enhancement if needed.
 
 
 <a id="dog-06"></a>
 ## DOG-06 — RFC §6 row: 5-PR worked example (RFC §4.2)
 
-**Status:** not yet run
+**Status:** passed
 
-Driver module: `rocm_mq.dogfood.dog_06`. Invoke per CONTEXT.md D-04, then re-run the aggregator.
+- **Latest pass:** `2026-05-21T04:56:21.986650+00:00`
+- **PR:** [#40](https://github.com/SamuelReeder/rocm-libraries/pull/40)
+- **Expected outcome:** `{"action": "AllMerged", "ordering_invariant": "merge_queue_active_status_posted precedes squash_merge_completed per PR", "per_pr_state_all": "merged", "pr_count": 5, "tree_diff_invariant": "tree_diff_status='ahead' on every squash_merge_completed"}`
+- **Observed outcome:** `{"action": "AllMerged", "ordering_invariant_violations": [], "per_pr": {"PR_A": {"active_run_url": "", "pr_number": 40, "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/40", "squash_run_url": "https://github.com/SamuelReeder/rocm-libraries/actions/runs/26205983384", "state": "merged", "tree_diff_status": "ahead"}, "PR_B": {"active_run_url": "", "pr_number": 41, "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/41", "squash_run_url": "https://github.com/SamuelReeder/rocm-libraries/actions/runs/26206283105", "state": "merged", "tree_diff_status": "ahead"}, "PR_C": {"active_run_url": "", "pr_number": 42, "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/42", "squash_run_url": "https://github.com/SamuelReeder/rocm-libraries/actions/runs/26206093108", "state": "merged", "tree_diff_status": "ahead"}, "PR_D": {"active_run_url": "", "pr_number": 43, "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/43", "squash_run_url": "https://github.com/SamuelReeder/rocm-libraries/actions/runs/26206208797", "state": "merged", "tree_diff_status": "ahead"}, "PR_E": {"active_run_url": "", "pr_number": 44, "pr_url": "https://github.com/SamuelReeder/rocm-libraries/pull/44", "squash_run_url": "https://github.com/SamuelReeder/rocm-libraries/actions/runs/26206093108", "state": "merged", "tree_diff_status": "ahead"}}, "pr_count": 5, "tree_diff_invariant_violations": []}`
+- **Source JSON:** [`dogfood-runs/2026-05-21T04-42-39.643364+00-00-dog_06.json`](dogfood-runs/2026-05-21T04-42-39.643364+00-00-dog_06.json)
+- **Notes:** 5-PR RFC §4.2 worked example replay. Primary pr_url='https://github.com/SamuelReeder/rocm-libraries/pull/40' (PR_A); all 5 PR URLs: PR_A: https://github.com/SamuelReeder/rocm-libraries/pull/40; PR_B: https://github.com/SamuelReeder/rocm-libraries/pull/41; PR_C: https://github.com/SamuelReeder/rocm-libraries/pull/42; PR_D: https://github.com/SamuelReeder/rocm-libraries/pull/43; PR_E: https://github.com/SamuelReeder/rocm-libraries/pull/44. Operational note: if driver runs longer than TIMEOUT_S due to real-CI variability, re-invocation does NOT clean up half-progress; operator must manually finalize partially-progressed PRs (clear mq:* labels, comment /dequeue) before retrying. Per plan 03-14 <action>.
 
 
 <a id="dog-07"></a>
