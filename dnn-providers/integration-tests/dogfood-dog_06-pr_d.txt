@@ -1,0 +1,1 @@
+dogfood dog_06 PR_D — RFC §4.2 worked example marker file. Engages integration-tests + every provider queue (same shape as PR_A; RFC §4.2 lines: D is the next integration-tests PR after B/C clear).
