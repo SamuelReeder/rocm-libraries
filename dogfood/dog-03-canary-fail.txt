@@ -1,0 +1,7 @@
+# DOG-03 — dogfood canary CI-failure marker file
+
+This PR exists to exercise the merge-queue processor's required-check
+eviction path (RFC §6 DOG-03, plan 03-12 dog_03.py). The PR title
+carries the [dogfood-ci-fail] substring so the canary workflow
+(plan 03-09) exits 1 -> required check fails -> processor ejects.
+Driver leaves the PR in place per CONTEXT.md D-04.
