@@ -1,0 +1,1 @@
+dogfood dog_06 PR_C — RFC §4.2 worked example marker file. Single-provider queue (hipblaslt-provider). DISJOINT from PR_B.
