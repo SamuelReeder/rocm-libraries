@@ -145,7 +145,7 @@ def _matches_any_prefix(path: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Parametrized unit tests — seven-row edge-case table (RESEARCH.md lines 600-607)
+# Parametrized unit tests — seven-row edge-case table
 # ---------------------------------------------------------------------------
 
 _UNIT_TEST_CASES: list[tuple[str, tuple[str, ...], frozenset[str]]] = [

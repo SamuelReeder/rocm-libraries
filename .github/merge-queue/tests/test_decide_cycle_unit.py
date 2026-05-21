@@ -1,14 +1,13 @@
-"""
-tests/test_decide_cycle_unit.py — Focused unit tests for decide_cycle's
-state-machine dispatch table (RESEARCH.md lines 691-700).
+"""Focused unit tests for decide_cycle's state-machine dispatch table
+(RFC §4.6).
 
 One test per dispatch row + bonus tests for:
 - 5a continue enforcement (Activate only, never Activate+Squash for same PR)
-- Pitfall 7: empty-queues guard (is_head_of_all returns False for frozenset())
-- Q2 resolution: disjoint-queue PRs can be [Squash(A), Activate(B)] in same cycle
-
-The Q2 resolution test includes an inline comment referencing RESEARCH.md Open
-Question 2 resolution.
+- empty-queues guard (is_head_of_all returns False for frozenset(), not
+  vacuously True)
+- disjoint-queue PRs can yield [Squash(A), Activate(B)] in the same cycle
+  (the "no same-cycle activation AND evaluation" rule is per-PR, not
+  per-cycle-globally).
 """
 
 from __future__ import annotations
@@ -123,10 +122,10 @@ def test_dispatch_row3__ready_active_valid_checks_pass_emits_squash() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rows 4 + 5 (failed / pending check eject branches) removed per 03-wr-09:
-# required-check evaluation now lives in GitHub branch protection, surfaced
-# via merge-API errors in executor._handle_squash. The pure layer always
-# emits Squash for validly-active head-of-queue PRs.
+# Rows 4 + 5 (failed / pending check eject branches) removed: required-check
+# evaluation now lives in GitHub branch protection, surfaced via merge-API
+# errors in executor._handle_squash. The pure layer always emits Squash for
+# validly-active head-of-queue PRs.
 # ---------------------------------------------------------------------------
 
 
@@ -158,12 +157,13 @@ def test_dispatch_row6__not_head_emits_nothing() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Row 7 (Pitfall 7): PR with queues == frozenset() → not in action list
+# Row 7: PR with queues == frozenset() → not in action list (empty-queues
+# guard against vacuous all([]) == True)
 # ---------------------------------------------------------------------------
 
 
 def test_dispatch_row7__empty_queues_guard() -> None:
-    """Row 7 (Pitfall 7): PR with queues=frozenset() is never head-of-all."""
+    """Row 7: PR with queues=frozenset() is never head-of-all."""
     pr = _make_pr_state(
         8,
         frozenset(),  # empty queues — vacuous all([]) guard
@@ -174,11 +174,13 @@ def test_dispatch_row7__empty_queues_guard() -> None:
     assert actions == []
 
 
-def test_pitfall7__empty_queues_prevents_vacuous_headship() -> None:
-    """Pitfall 7: is_head_of_all returns False for frozenset() (not vacuously True)."""
-    # A PR with empty queues must NEVER receive any action, even if it
-    # passes all other filters. The is_head_of_all guard explicitly returns
-    # False when pr.queues is empty to block the vacuous all([]) == True bug.
+def test_empty_queues_prevents_vacuous_headship() -> None:
+    """is_head_of_all returns False for frozenset() (not vacuously True).
+
+    A PR with empty queues must NEVER receive any action, even if it
+    passes all other filters. The is_head_of_all guard explicitly returns
+    False when pr.queues is empty to block the vacuous all([]) == True bug.
+    """
     pr_no_queues = _make_pr_state(
         9,
         frozenset(),
@@ -188,7 +190,7 @@ def test_pitfall7__empty_queues_prevents_vacuous_headship() -> None:
     snapshot = Snapshot(prs=(pr_no_queues,))
     actions = decide_cycle(snapshot, _CONFIG, _NOW)
     assert actions == [], (
-        "PR with queues=frozenset() must never receive any action (Pitfall 7 guard)"
+        "PR with queues=frozenset() must never receive any action"
     )
 
 
@@ -219,25 +221,25 @@ def test_bonus__5a_continue_activate_only_never_two_actions_for_same_pr() -> Non
 
 
 # ---------------------------------------------------------------------------
-# Bonus: Q2 resolution — disjoint-queue PRs can be [Squash(A), Activate(B)]
-# in same cycle
+# Bonus: disjoint-queue PRs can be [Squash(A), Activate(B)] in same cycle
 # ---------------------------------------------------------------------------
 
 
-def test_bonus__q2_resolution__disjoint_queues_squash_and_activate_same_cycle() -> None:
-    """Q2 resolution: [Squash(A), Activate(B)] is valid for disjoint-queue PRs.
+def test_bonus__disjoint_queues_squash_and_activate_same_cycle() -> None:
+    """[Squash(A), Activate(B)] is valid for disjoint-queue PRs.
 
-    RESEARCH.md Open Question 2 resolution: "Activation and evaluation never happen
-    in the same cycle for the same PR" is a PER-PR invariant, NOT a per-cycle-global
-    invariant. When PRs A and B belong to DISJOINT queues and are both at the head
-    of their respective queues, the algorithm evaluates each independently:
+    The "activation and evaluation never happen in the same cycle for the
+    same PR" rule (RFC §4.6) is a PER-PR invariant, NOT a per-cycle-global
+    invariant. When PRs A and B belong to DISJOINT queues and are both at
+    the head of their respective queues, the algorithm evaluates each
+    independently:
       - A has mq:active + valid + checks pass → Squash(A)
       - B has mq:queued (no mq:active) → Activate(B)
 
     Both actions appear in the same cycle's output. This is correct behavior:
-    A is in a different cycle stage (5b) from B (5a). The "no same-cycle activation
-    AND evaluation" rule applies per-PR: A never gets both Activate AND Squash
-    in the same cycle; B never gets both Activate AND Squash in the same cycle.
+    A is in a different cycle stage (5b) from B (5a). The per-PR rule still
+    holds: A never gets both Activate AND Squash in the same cycle; B never
+    gets both Activate AND Squash in the same cycle.
     """
     # PR A: in hipdnn queue only, ready to Squash
     pr_a = _make_pr_state(
@@ -284,7 +286,9 @@ def test_bonus__q2_resolution__disjoint_queues_squash_and_activate_same_cycle() 
 
 
 def test_edge__no_required_checks_active_valid_squash() -> None:
-    """Valid active PR → Squash (per 03-wr-09 always-Squash, no queue-side check eval)."""
+    """Valid active PR → Squash. The pure layer always emits Squash for a
+    validly-active head-of-queue PR; required-check evaluation is delegated
+    to branch protection (surfaced via merge-API errors in the executor)."""
     pr = _make_pr_state(
         11,
         frozenset({"hipdnn"}),
@@ -297,5 +301,5 @@ def test_edge__no_required_checks_active_valid_squash() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (mixed failed+pending eject test removed per 03-wr-09 — pure layer no
-# longer evaluates checks; executor reads merge-API response instead.)
+# (mixed failed+pending eject test removed — pure layer no longer evaluates
+# checks; the executor reads the merge-API response instead.)

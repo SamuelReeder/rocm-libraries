@@ -3,26 +3,21 @@ rocm_mq.comment — Pure status-comment renderer (RFC §4.3).
 
 Single public function: ``render_status_body(pr_state, render_ctx, now) -> str``.
 
-**Pure function contract (RFC §4.9 + PURE-09):**
+**Pure function contract (RFC §4.9):**
   - No ``datetime.now()`` / ``datetime.utcnow()`` / ``datetime.fromisoformat()`` calls;
     ``now`` is always an arg.
   - No I/O: no ``os.environ``, no ``subprocess``, no network calls.
   - No persistent state.
 
-**Marker contract (T-01-09):**
+**Marker contract:**
   The literal substring ``<!-- rocm-mq-status -->`` appears in every rendered body.
-  Phase 3 ``cmd_handle.py`` uses this marker to locate and upsert the status comment.
-  The marker is asserted in syrupy goldens (tests/__snapshots__/test_comment_render.ambr)
-  and in smoke tests — any drift from the marker string fails CI before commit.
+  The handler uses this marker to locate and upsert the status comment; any drift
+  from the marker string fails the syrupy goldens before commit.
 
 **State dispatch:**
   Dispatches on ``render_ctx.state`` via ``match`` with arms for
   ``"queued" | "active" | "merged" | "ejected"`` and a default arm raising
   ``ValueError(f"unknown state: {other}")``.
-
-  Future hardening (Phase 4) may swap ``state`` from a plain ``str`` to a
-  ``Literal["queued", "active", "merged", "ejected"]`` enum — the renderer code
-  already handles exactly these four values.
 """
 
 from __future__ import annotations
@@ -31,10 +26,7 @@ from datetime import datetime
 
 from rocm_mq.state import PRState, RenderContext
 
-# ---------------------------------------------------------------------------
-# Load-bearing marker (T-01-09) — Phase 3 comment-upsert greps for this string.
-# Do NOT change this string without a coordinated Phase 3 change.
-# ---------------------------------------------------------------------------
+# Load-bearing marker — the handler's comment-upsert greps for this string.
 _STATUS_MARKER = "<!-- rocm-mq-status -->"
 
 
@@ -64,7 +56,7 @@ def render_status_body(
 
     Args:
         pr_state: Derived PR state (decision layer output).
-        render_ctx: Renderer-only data (populated by cmd_handle.py / cmd_process.py).
+        render_ctx: Renderer-only data (populated at the I/O boundary).
         now: Current time (passed by caller; NEVER call datetime.now() here).
 
     Returns:
@@ -99,7 +91,7 @@ def _render_queued(
     now: datetime,
 ) -> str:
     """Render the queued state body (## ⏳ Queued for merge)."""
-    _ = now  # pure function — now carried for API symmetry; not used in queued body
+    _ = now
     lines: list[str] = []
     lines.append("## ⏳ Queued for merge")
     lines.append("")
@@ -129,13 +121,10 @@ def _render_active(
     now: datetime,
 ) -> str:
     """Render the active state body (## 🚦 Active in merge queue)."""
-    _ = (render_ctx, now)  # pure function — render_ctx.blockers/positions unused in active
+    _ = (render_ctx, now)
     lines: list[str] = []
     lines.append("## 🚦 Active in merge queue")
     lines.append("")
-    # RenderContext does not carry an "activated at" timestamp (D-03 keeps activation
-    # timestamps out of RenderContext — they are decision-layer state, not renderer data).
-    # Phase 4 may add an activated_at field if needed for display.
     lines.append(f"Activated on head SHA `{pr_state.head_sha}`.")
     lines.append("")
     lines.append(
@@ -151,19 +140,18 @@ def _render_merged(
     now: datetime,
 ) -> str:
     """Render the merged state body (## ✅ Merged)."""
-    _ = (pr_state, now)  # pure function — pr_state fields unused in merged body
+    _ = (pr_state, now)
     lines: list[str] = []
     lines.append("## ✅ Squashed and merged")
     lines.append("")
     lines.append(f"Squashed to develop as `{render_ctx.merged_sha}`.")
     lines.append("")
-    # tree_diff_status=ahead is an invariant any successful squash satisfies:
-    # executor._verify_squash Phase B raises CorruptSquashError unless the
-    # post-squash compare_commits reports status='ahead' AND a non-empty
-    # files list. Surfacing the substring here lets DOG-06 (and future audit
-    # tooling) confirm the SC#3 Apr-2026 silent-corruption check ran without
-    # parsing the executor source. Sentinel-only — no escape concerns.
-    lines.append("_tree_diff_status=ahead (Phase B compare_commits verified)._")
+    # tree_diff_status=ahead is an invariant any successful squash must
+    # satisfy: the executor's post-squash verification raises
+    # CorruptSquashError unless compare_commits reports status='ahead' with
+    # a non-empty files list. Surfacing the sentinel here lets audit tooling
+    # confirm the silent-corruption check ran without parsing executor source.
+    lines.append("_tree_diff_status=ahead (compare_commits verified)._")
     return "\n".join(lines)
 
 
@@ -173,7 +161,7 @@ def _render_ejected(
     now: datetime,
 ) -> str:
     """Render the ejected state body (## ❌ Ejected from merge queue)."""
-    _ = (pr_state, now)  # pure function — pr_state fields unused in ejected body
+    _ = (pr_state, now)
     lines: list[str] = []
     lines.append("## ❌ Ejected from merge queue")
     lines.append("")

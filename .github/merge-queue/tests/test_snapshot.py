@@ -1,15 +1,13 @@
-"""
-tests/test_snapshot.py — Unit tests for rocm_mq.snapshot (IO-02).
+"""Unit tests for rocm_mq.snapshot — raw-state assembly from GitHub responses.
 
 Covers:
-- ``_make_status_creator``: SimpleUser → CommitStatusCreator bridging
-  (RESEARCH.md Critical Discovery 1) — only the App's bot login plus type=="Bot"
-  populates ``app_slug`` and ``app_id``. Workflow bots ("github-actions[bot]")
-  and User-type creators leave the app fields ``None``.
-- ``_map_check_run_state``: githubkit CheckRun (status, conclusion) tuple → the
-  PRState ``state`` literal expected by the pure decision layer.
+- ``_make_status_creator``: SimpleUser → CommitStatusCreator bridging.
+  App-authored statuses are identified by creator type + slug: only the
+  App's bot login plus type=="Bot" populates ``app_slug`` and ``app_id``.
+  Workflow bots ("github-actions[bot]") and User-type creators leave the
+  app fields ``None``.
 - ``build_snapshot``:
-  - skip ``pulls.list_files`` when PR already has ``mq:<queue>`` labels (OQ-2)
+  - skip ``pulls.list_files`` when PR already has ``mq:<queue>`` labels
   - call ``pulls.list_files`` when PR has no ``mq:*`` labels
   - timeline-event lag scenario → ``mq_queued_label_events=()``
   - incomplete search results → raises
@@ -94,7 +92,8 @@ def _resp(data: Any) -> SimpleNamespace:
 
 
 # ---------------------------------------------------------------------------
-# 1. _make_status_creator — Critical Discovery 1 bridging
+# 1. _make_status_creator — App-authored statuses identified by creator
+# type + slug (not by login alone)
 # ---------------------------------------------------------------------------
 
 
@@ -142,13 +141,14 @@ def test_make_status_creator__none_creator__returns_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. _map_check_run_state tests removed per 03-wr-09 — required-check
-#    mapping is no longer the queue's concern (branch protection owns it).
+# 2. _map_check_run_state tests removed — required-check mapping is no
+#    longer the queue's concern (branch protection is the source of truth).
 # ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
-# 3. build_snapshot — OQ-2 / search incompleteness / timeline lag
+# 3. build_snapshot — label/file optimization, search incompleteness,
+# timeline lag
 # ---------------------------------------------------------------------------
 
 
@@ -205,7 +205,11 @@ def _arm_single_pr(
 
 
 def test_build_snapshot__skips_list_files_when_queue_labels_present() -> None:
-    """OQ-2: PR with mq:<queue> labels → pulls.list_files NOT called; changed_paths=()."""
+    """PR with mq:<queue> labels → pulls.list_files NOT called; changed_paths=().
+
+    The queue labels already encode the path-to-queue mapping result, so
+    re-querying the file list every cycle is wasted API budget.
+    """
     client = _FakeClient()
     config = canonical_merge_queue_config()
 
@@ -246,7 +250,7 @@ def test_build_snapshot__calls_list_files_when_no_queue_labels() -> None:
 
 
 def test_build_snapshot__timeline_lag__mq_queued_events_empty_when_lag_simulated() -> None:
-    """Timeline returning no events (Pitfall 4) → mq_queued_label_events=()."""
+    """Timeline returning no events (label-event visibility lag) → mq_queued_label_events=()."""
     client = _FakeClient()
     config = canonical_merge_queue_config()
 
@@ -293,7 +297,12 @@ def test_build_snapshot__timeline_lag__mq_queued_event_present_populates_tuple()
 
 
 def test_build_snapshot__incomplete_results_raises() -> None:
-    """Search returning incomplete_results=True must abort the cycle (T-02-02-02)."""
+    """Search returning incomplete_results=True must abort the cycle.
+
+    An incomplete result set could drop a head-of-queue PR from the snapshot
+    and silently violate FIFO/head-of-all-queues invariants; the only safe
+    response is to fail loud and let the next cycle retry.
+    """
     client = _FakeClient()
     config = canonical_merge_queue_config()
 
@@ -305,7 +314,7 @@ def test_build_snapshot__incomplete_results_raises() -> None:
 
 
 def test_build_snapshot__search_query_quotes_label_value() -> None:
-    """The search query must wrap the mq:<queue> label in double quotes (WR-02).
+    """The search query must wrap the mq:<queue> label in double quotes.
 
     GitHub search's label: qualifier needs quoted values when they contain
     colons (e.g., mq:hipdnn); without quotes the search may silently miss
@@ -328,14 +337,14 @@ def test_build_snapshot__search_query_quotes_label_value() -> None:
     for call in client.rest.search.issues_and_pull_requests.call_args_list:
         q = call.kwargs.get("q") or (call.args[0] if call.args else "")
         assert 'label:"' in q, (
-            f"search query missing quoted label form (WR-02): q={q!r}"
+            f"search query missing quoted label form: q={q!r}"
         )
 
 
 def test_build_snapshot__search_total_count_exceeds_items__raises() -> None:
-    """total_count > len(items) implies pagination is needed (WR-02 guard).
+    """total_count > len(items) implies pagination is needed.
 
-    Full pagination support is a Phase 3 follow-up; the assertion guards
+    Full pagination support is a future follow-up; the assertion guards
     against silently dropping PRs from the snapshot when a queue grows
     past per_page=100.
     """
@@ -355,9 +364,9 @@ def test_build_snapshot__search_total_count_exceeds_items__raises() -> None:
         build_snapshot(client, config, owner="SamuelReeder", repo="rocm-libraries")
 
 
-# (test_build_snapshot__combines_check_runs_and_commit_statuses removed per
-# 03-wr-09: check_runs are no longer loaded into required_check_results;
-# branch protection is the source of truth.)
+# (test_build_snapshot__combines_check_runs_and_commit_statuses removed:
+# check_runs are no longer loaded into required_check_results; branch
+# protection is the source of truth for required-check enforcement.)
 
 
 def test_build_snapshot__deduplicates_pr_across_queue_searches() -> None:

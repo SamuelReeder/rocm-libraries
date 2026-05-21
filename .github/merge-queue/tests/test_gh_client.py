@@ -1,5 +1,4 @@
-"""
-tests/test_gh_client.py — Unit tests for rocm_mq.gh (IO-01).
+"""Unit tests for rocm_mq.gh — GitHubClient wrapper and identity resolution.
 
 Covers:
 - GitHubClient(token=...) constructor + .rest passthrough.
@@ -7,7 +6,9 @@ Covers:
   exception passthrough.
 - resolve_app_identity: two-call startup pattern (apps.get_authenticated +
   users.get_by_username(slug+"[bot]")) returning AppIdentity with bot_user_id
-  populated from the user lookup (OQ-1 / A1 resolution).
+  populated from the user lookup. The bot_user_id is only obtainable via the
+  users.get_by_username call (the apps.get_authenticated response carries
+  the App's id but not the bot user's id).
 - CorruptSquashError is a RuntimeError subclass.
 
 Mocks the underlying githubkit client to avoid network calls. Mock targets are at
@@ -47,9 +48,9 @@ def _make_secondary_rate_limit_exc(retry_after_seconds: float = 0.0) -> Secondar
 def _make_request_failed_exc(status_code: int = 500) -> RequestFailed:
     """Construct a RequestFailed without a real httpx.Response.
 
-    Delegates to the canonical shim in ``tests.gh_fake._make_request_failed``
-    (WR-09). Two parallel ``RequestFailed.__new__`` constructors invited
-    drift if githubkit's exception shape changes; one owning home is safer.
+    Delegates to the canonical shim in ``tests.gh_fake._make_request_failed``.
+    Two parallel ``RequestFailed.__new__`` constructors invited drift if
+    githubkit's exception shape changes; one owning home is safer.
     """
     from tests.gh_fake import _make_request_failed
 
@@ -157,14 +158,14 @@ def test_retry_forwards_args_and_kwargs(monkeypatch: pytest.MonkeyPatch) -> None
 def test_rest_proxy__leaf_method_call_runs_through_request_with_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """client.rest.<ns>.<method>(...) must absorb SecondaryRateLimitExceeded (WR-01).
+    """client.rest.<ns>.<method>(...) must absorb SecondaryRateLimitExceeded.
 
     Regression guard: previously request_with_retry was a public method that
     nobody called, so SecondaryRateLimitExceeded propagating out of any
     snapshot/executor call site would kill the cycle. Now client.rest is a
     _RetryProxy that runs every method through request_with_retry; the
     transient rate-limit error is absorbed and the call retries
-    transparently.
+    transparently — read-replication lag absorbed at the transport layer.
     """
     monkeypatch.setattr("rocm_mq.gh.time.sleep", lambda _: None)
 
@@ -365,12 +366,12 @@ def test_corrupt_squash_error_is_runtime_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. WR-09: _make_request_failed shim smoke test
+# 5. _make_request_failed shim smoke test
 # ---------------------------------------------------------------------------
 
 
 def test_make_request_failed_shim__roundtrip_does_not_raise() -> None:
-    """The shim must produce a usable RequestFailed (WR-09 regression guard).
+    """regression guard: the shim must produce a usable RequestFailed.
 
     Bypassing __init__ via __new__ + attribute assignment means the
     constructed exception may be missing fields githubkit's __init__
@@ -379,8 +380,8 @@ def test_make_request_failed_shim__roundtrip_does_not_raise() -> None:
     does not raise — a missing attribute in __init__ would typically
     surface there first.
 
-    Consolidated into one home in tests/gh_fake (WR-09); previously a
-    duplicate shim lived here and the two could drift independently.
+    Consolidated into one home in tests/gh_fake; previously a duplicate
+    shim lived here and the two could drift independently.
     """
     from tests.gh_fake import _make_request_failed
 

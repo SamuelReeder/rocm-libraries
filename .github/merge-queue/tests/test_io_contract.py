@@ -1,6 +1,5 @@
-"""
-tests/test_io_contract.py — IO-06 contract tests for the four load-bearing
-GitHub semantic behaviors that the merge queue depends on.
+"""Contract tests for the load-bearing GitHub semantic behaviors that the
+merge queue depends on.
 
 Why a "contract" test (vs a plain unit test): the fake (``tests/gh_fake.py``)
 is the substitute for the real GitHub API in every test outside this file.
@@ -8,7 +7,7 @@ If the fake silently drifts from real GitHub semantics, the entire executor
 suite passes vacuously and a real-API bug surfaces only at processor-run
 time (every 3 minutes — the worst possible feedback latency, RFC §4.6).
 
-The four behaviors locked here:
+The behaviors locked here:
 
   1. **(SHA, context) status overwrite** — second ``create_commit_status``
      on the same ``(sha, context)`` REPLACES the first. Status created/read
@@ -19,18 +18,21 @@ The four behaviors locked here:
      catching this so unlabel is idempotent across restarts.
   4. **``repos.merge`` returns 204 when already up-to-date, 201 with a fresh
      SHA otherwise** — used by the post-squash branch fast-forward step.
+  5. **``compare_commits`` direction- and ancestry-awareness** — the fake
+     parses ``basehead``, walks the seeded commits graph, and answers
+     'ahead'/'behind'/'identical'/'diverged' to match real GitHub.
 
-Plus a bonus "creator identity distinction" pair that verifies the
-SimpleUser bridging in ``snapshot._make_status_creator`` accepts the App's
-own statuses and rejects sibling-workflow ones (RFC §4.3.1).
+Plus a "creator identity distinction" pair that verifies the SimpleUser
+bridging in ``snapshot._make_status_creator`` accepts the App's own statuses
+and rejects sibling-workflow ones (RFC §4.3.1).
 
 Backend: only the in-memory ``FakeGitHub`` is exercised here. A previous
 revision of this file declared a parametrized ``"real"`` backend that was
 unreachable (the params list was hard-coded to ``["fake"]``) and gated
 behind a nonexistent nightly CI job. Documenting a "real" path that
 never runs is worse than not documenting it — it gives a false sense of
-fake-vs-real drift coverage. Removed entirely (WR-06). To add real-API
-coverage in the future, introduce a separate test module gated on
+fake-vs-real drift coverage. Removed entirely. To add real-API coverage
+in the future, introduce a separate test module gated on
 ``PYTEST_RUN_REAL_GITHUB=1`` and a scheduled CI workflow that mints the
 token via ``actions/create-github-app-token`` against a sandbox repo.
 """
@@ -53,7 +55,7 @@ REPO = "rocm-libraries"
 
 
 # ---------------------------------------------------------------------------
-# Fake-backend fixture (WR-06: dormant "real" branch removed).
+# Fake-backend fixture (dormant "real" backend branch removed).
 # ---------------------------------------------------------------------------
 
 
@@ -207,7 +209,7 @@ def test_repos_merge__new_commit__returns_201_with_sha(
 
 
 # ---------------------------------------------------------------------------
-# Semantic 5: compare_commits direction-of-comparison (WR-02)
+# Semantic 5: compare_commits direction-of-comparison
 # ---------------------------------------------------------------------------
 # The fake's compare_commits MUST be input-aware: it parses ``basehead``,
 # walks the seeded commits graph, and returns a verdict that reflects the
@@ -240,10 +242,10 @@ def test_compare_commits__behind_when_direction_is_swapped(
 ) -> None:
     """basehead='head...base' (wrong direction) → status='behind', files=[].
 
-    Pins the bug the input-agnostic stub could not catch: a future refactor
-    that swaps the basehead direction would change the semantic from
-    "did the squash advance develop" to "is develop ahead of squash". The
-    real API answers 'behind' to the swapped form; the fake MUST too so
+    Pins a regression that an input-agnostic stub could not catch: a future
+    refactor that swaps the basehead direction would change the semantic
+    from "did the squash advance develop" to "is develop ahead of squash".
+    The real API answers 'behind' to the swapped form; the fake MUST too so
     that direction-swap regressions fail at test time.
     """
     client, state = github_client_and_state
@@ -258,7 +260,7 @@ def test_compare_commits__behind_when_direction_is_swapped(
 def test_compare_commits__identical_when_base_equals_head(
     github_client_and_state: tuple[Any, FakeRepoState],
 ) -> None:
-    """basehead='X...X' → status='identical', files=[]. Pitfall 8 shape."""
+    """basehead='X...X' → status='identical', files=[]. Apr-2026 silent-corruption shape."""
     client, _state = github_client_and_state
     resp = client.rest.repos.compare_commits(
         OWNER, REPO, basehead="same_sha...same_sha"
@@ -301,8 +303,9 @@ def test_compare_commits__empty_basehead_half__raises_422(
 
 
 # ---------------------------------------------------------------------------
-# Bonus: creator identity bridging — App vs sibling workflow
-# (T-02-02-01 / T-02-02-05 mitigation verification)
+# Bonus: creator identity bridging — App vs sibling workflow.
+# Pins the activation-status creator filter: only the App's own statuses
+# may be treated as authoritative; sibling github-actions[bot] is rejected.
 # ---------------------------------------------------------------------------
 
 

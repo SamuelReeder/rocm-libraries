@@ -1,63 +1,20 @@
 """
-rocm_mq.cmd_handle — Command handler for /merge and /dequeue (RFC §4.5).
+rocm_mq.cmd_handle — Command handler for ``/merge`` and ``/dequeue``
+(RFC §4.3–§4.5). Invoked from ``.github/workflows/mq-handler.yml`` on every
+``issue_comment: [created]`` event.
 
-Phase 3 plan 03-06 module. Wired by ``cmd_process.run_handle`` (plan 03-01
-subparser) and invoked from ``.github/workflows/mq-handler.yml`` (plan 03-07)
-on every ``issue_comment: [created]`` event on the fork.
+Public surface:
+  - ``main(argv) -> int`` — CLI entrypoint; reads ``$GITHUB_EVENT_PATH``,
+    parses the webhook payload, dispatches to the per-command handler.
+  - ``parse_commands(body) -> set[str]`` — per-line ``^/(merge|dequeue)\\s*$``
+    parser.
+  - ``is_self_bootstrap(changed_paths) -> list[str]`` — intersection of
+    changed paths with ``SELF_BOOTSTRAP_PATHS`` (RFC §8).
 
-Public surface (Phase 3 contract):
-  - ``main(argv: list[str] | None = None) -> int`` — CLI entrypoint.
-    Reads $GITHUB_EVENT_PATH (or ``--event-path``), parses the GitHub
-    issue_comment webhook payload, dispatches to /merge or /dequeue
-    handlers, and returns a process exit code (0 success / non-zero error).
-  - ``parse_commands(body: str) -> set[str]`` — per-line regex parser
-    (RESEARCH.md Area #6 default).
-  - ``is_self_bootstrap(changed_paths: list[str]) -> list[str]`` —
-    intersection of changed paths with ``SELF_BOOTSTRAP_PATHS`` (RFC §8
-    self-bootstrap protection; RESEARCH.md Area #16).
-
-Layering (PURE-09): this module is I/O layer — it imports ``gh``,
-``executor``, ``comment``, ``pathmap``, ``config`` freely plus stdlib
-``fnmatch``, ``json``, ``os``, ``re``, ``sys``, ``traceback``. It is NOT in
-``PURE_LAYER_MODULES``; ``tests/test_pure_layer_imports.py`` confirms the
-boundary.
-
-Token-split discipline (RFC §4.9):
-  - The label-apply path, the live perm check, the at-enqueue gate reads,
-    pulls.list_files, and the at-enqueue rejection comments go through the
-    App installation token (the single ``GITHUB_TOKEN`` env var the workflow
-    sets to ``steps.app-token.outputs.token``).
-  - The eyes-reaction and the ``<!-- rocm-mq-status -->`` status comment
-    are conceptually ``GITHUB_TOKEN``-scoped (RFC §4.9 token split). For
-    Phase 3 the handler accepts a single client (the App token) since both
-    write surfaces are within the App installation's scoped permissions
-    (issues: write covers both label apply AND comment / reaction writes).
-    The workflow may pass a distinct GITHUB_TOKEN-backed client in a future
-    refactor; the single-client shape today keeps the implementation
-    minimal while preserving the audit narrative.
-
-WF coverage:
-  - WF-01: live ``repos.get_collaborator_permission_level`` (NEVER
-    ``author_association``; Pitfall 17) with the RFC §4.4 PR-author override.
-  - WF-02: four at-enqueue gates — ≥1 approving review, no failing required
-    check on head SHA, fork maintainer-edits enabled, queue set non-empty.
-  - WF-03: idempotent second ``/merge`` — short-circuits to eyes + comment
-    upsert when ``mq:queued`` or ``mq:active`` is already on the PR.
-  - WF-08 / DOG-08: ``SELF_BOOTSTRAP_PATHS`` rejection BEFORE any state
-    mutation.
-  - WF-11: status comment upsert via ``executor._find_status_comment_id``
-    + ``comment.render_status_body`` (load-bearing ``<!-- rocm-mq-status
-    -->`` marker embedded by the renderer).
-  - WF-12: NOT directly implemented here — passively satisfied by Phase 2's
-    executor (new head SHA after a force-push lacks the App-created
-    ``merge-queue/active`` status; the next processor cycle ejects).
-    Documented in 03-06-SUMMARY.md.
-
-Architectural note: this module does NOT import ``rocm_mq.decision`` and
-does NOT call ``decide_cycle``. ``/merge`` only labels the PR + posts the
-status comment + posts the eyes reaction; the processor's next cycle
-discovers the queued PR via the standard search-by-label path and runs
-the decision algorithm normally (RFC §4.6).
+This module does not import ``rocm_mq.decision`` and does not call
+``decide_cycle``. ``/merge`` only labels the PR, posts the status comment,
+and posts the eyes reaction; the processor's next cycle discovers the
+queued PR via search-by-label and runs the decision algorithm (RFC §4.6).
 """
 
 from __future__ import annotations
@@ -88,21 +45,19 @@ if TYPE_CHECKING:
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-# Per-line exact-match command regex. Area #6: humans pasting code snippets
-# that quote `/merge` in inline-code (backticks at column 1) do NOT match
-# because ``^/`` fails after .strip(). Fenced code blocks containing ONLY
-# ``/merge`` on a line WOULD match — intentional permissiveness per CONTEXT.md
-# Discretion default (option-a; documented in 03-06-SUMMARY.md).
+# Per-line exact-match command regex. Humans pasting code snippets that
+# quote `/merge` in inline-code do not match (the leading backtick fails
+# ``^/`` after .strip()); fenced code blocks containing only ``/merge`` on
+# a line do match — intentional permissiveness.
 _CMD_RE: re.Pattern[str] = re.compile(r"^/(merge|dequeue)\s*$")
 
 # RFC §4.4: collaborators with these roles may /merge any PR. PR authors are
 # always eligible regardless of role (live override in ``_check_perm``).
 _ELIGIBLE_ROLES: frozenset[str] = frozenset({"admin", "maintain", "write"})
 
-# RFC §4.3 / D-03 label-name conventions. These mirror the
-# ``MergeQueueConfig`` defaults but are kept as module constants here
-# because the idempotency short-circuit runs BEFORE the config load, so we
-# cannot read them off ``config``.
+# RFC §4.3 label-name conventions. Mirror ``MergeQueueConfig`` defaults but
+# kept as module constants because the idempotency short-circuit runs
+# BEFORE the config load.
 _LABEL_QUEUED = "mq:queued"
 _LABEL_ACTIVE = "mq:active"
 _LABEL_PREFIX = "mq:"
@@ -116,19 +71,10 @@ _LABEL_PREFIX = "mq:"
 def parse_commands(body: str) -> set[str]:
     """Return the set of recognized commands in a comment body.
 
-    Per-line exact match (RESEARCH.md Area #6 default). Each line is
-    stripped of leading/trailing whitespace and matched against
-    ``^/(merge|dequeue)\\s*$``. The set return type means duplicate
-    commands (``/merge`` posted twice in one comment) collapse to a single
-    entry — the handler responds once per distinct command, which matches
-    the idempotency contract (RFC §4.5).
-
-    Args:
-        body: The full text of an issue comment body.
-
-    Returns:
-        A set containing ``"merge"`` and/or ``"dequeue"`` for any lines
-        matching the regex; empty set when no recognized command is present.
+    Per-line exact match. Each line is stripped of whitespace and matched
+    against ``^/(merge|dequeue)\\s*$``. The set return type means duplicate
+    commands collapse to a single entry — the handler responds once per
+    distinct command (RFC §4.5 idempotency contract).
     """
     return {
         m.group(1)
@@ -140,18 +86,17 @@ def parse_commands(body: str) -> set[str]:
 def is_self_bootstrap(changed_paths: list[str]) -> list[str]:
     """Return the subset of ``changed_paths`` that intersect SELF_BOOTSTRAP_PATHS.
 
-    Uses ``fnmatch`` (case-sensitive on GitHub's API-returned literal paths;
-    Pitfall 12). Symlink / case-only-rename adversarial coverage is Phase 4
-    (VAL-03); Phase 3 documents but does not implement those defenses.
+    Self-bootstrap protection per RFC §8. Uses ``fnmatch`` (case-sensitive
+    on GitHub's API-returned literal paths).
 
     Args:
         changed_paths: List of file paths returned by
             ``pulls.list_files(...).parsed_data[*].filename``.
 
     Returns:
-        Sorted-by-input-order subset of ``changed_paths`` that matched any
+        Subset of ``changed_paths`` (input order preserved) that matched any
         SELF_BOOTSTRAP glob. Empty list means the PR is safe to enqueue
-        (from the self-bootstrap perspective).
+        from the self-bootstrap perspective.
     """
     hits: list[str] = []
     for path in changed_paths:
@@ -175,18 +120,18 @@ def _check_perm(
 ) -> tuple[bool, str]:
     """Live collaborator permission check + RFC §4.4 PR-author override.
 
-    Implements WF-01. Returns ``(eligible, role_name)``:
+    Returns ``(eligible, role_name)``:
       - ``eligible`` is True when the commenter is the PR author (override),
         or when their live ``repos.get_collaborator_permission_level``
         role is in ``_ELIGIBLE_ROLES``.
       - ``role_name`` is the live role string from the API
         (``admin|maintain|write|triage|read|none``), or ``"none"`` when the
-        API returns 404 (not a collaborator). The PR-author override path
-        also returns the live role if seedable, otherwise ``"none"``.
+        API returns 404 (not a collaborator).
 
-    NEVER read from ``event.comment.author_association`` — Pitfall 17:
-    that field is computed at comment-write time and is not refreshed when
-    org / collaborator state changes. The live API call is authoritative.
+    Uses the live collaborator permission API, not ``author_association``,
+    because ``author_association`` is computed at comment-write time and
+    does not reflect collaborators added after the fork was created (or
+    any subsequent org / collaborator state change).
     """
     # Probe the live role first. On 404 (not a collaborator) we still need
     # the PR-author override to make the decision.
@@ -220,19 +165,21 @@ def _check_at_enqueue_gates(
     *,
     require_approval: bool = True,
 ) -> list[str]:
-    """Check the four WF-02 at-enqueue gates; return list of failed-gate names.
+    """Check the at-enqueue gates (RFC §4.3). Returns a list of failed gate
+    names; empty means all passed.
 
-    Empty return → all four gates passed → handler proceeds with enqueue.
-    Non-empty return → at least one gate failed → handler rejects with a
-    single comment listing every failing gate (no labels applied).
+    All gates are checked even if earlier ones fail so the rejection comment
+    shows the user every blocker at once.
 
-    Gates (in declaration order; all four are checked even if earlier ones
-    fail so the user sees the full picture in one rejection comment):
-      1. ``empty-queue-set`` — derived queue set is empty (DOG-08 adjacent;
-         this is also handled separately in main() to produce a more
-         specific message, but we re-check here for safety).
+    Gates:
+      1. ``empty-queue-set`` — derived queue set is empty. (Also handled
+         separately in main() with a more specific message; re-checked
+         here for safety.)
       2. ``maintainer-edits-disabled`` — ``pr.maintainer_can_modify`` is
-         False on a fork PR (the queue's develop-merge push needs this).
+         False on a cross-repo PR (the queue's develop-merge push needs
+         the upstream maintainer to have push access to the fork branch).
+         Only checked on cross-repo PRs — see ``maintainer_can_modify``
+         note below.
       3. ``no-approval`` — ``pulls.list_reviews`` carries zero entries
          whose ``state == "APPROVED"`` (RFC §5: required review state).
       4. ``failing-required-check`` — ``get_combined_status_for_ref`` for
@@ -243,17 +190,13 @@ def _check_at_enqueue_gates(
     if not queues:
         failed.append("empty-queue-set")
 
-    # The `maintainer_can_modify` field is semantically only meaningful for
-    # cross-repo PRs (head and base live in different repositories). For
-    # same-repo PRs GitHub returns `false` by default — the field has no
-    # real meaning because the PR head IS in the maintainer's repo. Gating
-    # on it for same-repo PRs trips drivers that legitimately need to
-    # merge through the queue. Restrict the check to cross-repo PRs where
-    # the field carries real signal (the fork author must opt-in to let
-    # the upstream maintainer push to their branch for the queue's
-    # develop-merge step). Discovered live by dog_04 against the fork
-    # (same-repo PRs returned `maintainer_can_modify=false` despite the
-    # driver explicitly requesting `true`).
+    # The `maintainer_can_modify` field is only meaningful for cross-repo
+    # PRs. For same-repo PRs GitHub returns `false` by default — the field
+    # has no meaning because the PR head IS in the maintainer's repo, and
+    # gating on it would reject legitimate same-repo PRs. Restrict the
+    # check to cross-repo PRs where the field carries real signal (the
+    # fork author must opt in to let the upstream maintainer push to their
+    # branch for the queue's develop-merge step).
     head_repo_id = getattr(
         getattr(getattr(pr, "head", None), "repo", None), "id", None
     )
@@ -268,13 +211,11 @@ def _check_at_enqueue_gates(
     if is_cross_repo and not getattr(pr, "maintainer_can_modify", True):
         failed.append("maintainer-edits-disabled")
 
-    # No-approval gate (RFC §5 / WF-02). Behavior is config-toggled via
-    # ``MergeQueueConfig.require_approval_at_enqueue`` so the dogfood fork
-    # can disable it (the fork has only one collaborator and PR authors
-    # cannot self-approve per RFC §5, blocking every dogfood driver) while
-    # the default-True preserves the upstream contract. PORT-02 closure:
-    # the config flag replaces a code-level comment-out so the gate cannot
-    # silently regress at upstream port time.
+    # No-approval gate (RFC §5). Behavior is config-toggled via
+    # ``MergeQueueConfig.require_approval_at_enqueue`` (default True
+    # preserves the upstream contract; PORT-02 closure — the config flag
+    # replaces a code-level comment-out so the gate cannot silently
+    # regress at upstream port time).
     if require_approval:
         reviews_resp = client.rest.pulls.list_reviews(owner, repo, pr_number)
         reviews = list(reviews_resp.parsed_data or [])
@@ -301,12 +242,7 @@ def _apply_labels(
     pr_number: int,
     queues: frozenset[str],
 ) -> None:
-    """Apply ``mq:queued`` + ``mq:<queue>`` for each derived queue.
-
-    Idempotent (the GitHub API + the FakeGitHub semantics 2 contract:
-    add_labels on an already-present label is a no-op). One round-trip
-    per call — labels are batched in a single request.
-    """
+    """Apply ``mq:queued`` + ``mq:<queue>`` for each derived queue. Idempotent."""
     labels = [_LABEL_QUEUED, *sorted(f"{_LABEL_PREFIX}{q}" for q in queues)]
     client.rest.issues.add_labels(owner, repo, pr_number, labels=labels)
 
@@ -348,12 +284,7 @@ def _upsert_status_comment(
     author_login: str,
     now: datetime,
 ) -> None:
-    """Build a RenderContext for the given state + upsert the status comment.
-
-    Mirrors ``executor._handle_update_comment`` exactly — find the existing
-    comment by ``<!-- rocm-mq-status -->`` marker (paginated via WR-03)
-    and update it, or create a fresh comment if none exists.
-    """
+    """Build a RenderContext for the given state and upsert the status comment."""
     head_sha = str(getattr(getattr(pr, "head", None), "sha", ""))
     # Build a minimal PRState — render_queued only reads enqueued_at and
     # ignores most other fields. Use ``now`` as the enqueued timestamp
@@ -402,7 +333,7 @@ def _post_eyes_reaction(
     """Post the eyes reaction on the trigger comment.
 
     The reactions API returns 200 on duplicate, 201 on first — both are
-    success, no pre-check needed (RESEARCH.md Area #7).
+    success, no pre-check needed.
     """
     client.rest.reactions.create_for_issue_comment(
         owner, repo, comment_id, content="eyes"
@@ -479,27 +410,21 @@ def _handle_merge(
 ) -> int:
     """End-to-end /merge dispatch. Returns 0 on success, non-zero on error.
 
-    Step order is load-bearing per the plan's behavior block:
-      0. WF-12 eyes-reaction — posted FIRST, before any branching. Eyes
-         is the ack-receipt signal that the handler saw the comment; it
-         is independent of whether the /merge accepts or rejects.
+    Step order is load-bearing:
+      0. Eyes-reaction — posted first, before any branching, so every
+         downstream rejection branch implicitly carries the ack.
       1. Read PR (need labels for idempotency + author for perm override).
-      2. Idempotency short-circuit (mq:queued / mq:active present → eyes
-         + comment upsert only; no labels, no perm check, no gates).
-      3. Self-bootstrap rejection (RFC §8) — runs BEFORE any state mutation.
+      2. Idempotency short-circuit (``mq:queued`` / ``mq:active`` present →
+         comment upsert only; no labels, no perm check, no gates).
+      3. Self-bootstrap rejection (RFC §8) — before any state mutation.
       4. Permission check (live API; PR-author override).
-      5. Queue derivation (pulls.list_files → pathmap.queues_for_paths).
+      5. Queue derivation (``pulls.list_files`` → ``queues_for_paths``).
       6. At-enqueue gates (≥1 approval, no failing required check,
          maintainer-edits, queue set non-empty).
       7. Label apply + status-comment upsert.
     """
-    # Step 0 (WF-12): eyes-reaction posted on EVERY received /merge,
-    # regardless of accept/reject outcome. Posted FIRST so every downstream
-    # rejection branch implicitly carries the ack. The reactions API is
-    # idempotent (200 on duplicate, 201 on first) so a second /merge that
-    # falls into the idempotency short-circuit below still re-acks safely.
-    # Live DOG-04 run 2026-05-20 surfaced the missing-eyes-on-rejection bug
-    # (03-wr-05 closes it).
+    # Step 0: post the reaction before any state mutation — idempotent on
+    # re-delivery (reactions API returns 200 on duplicate, 201 on first).
     _post_eyes_reaction(client, owner, repo, comment_id)
 
     pr_resp = client.rest.pulls.get(owner, repo, pr_number)
@@ -507,7 +432,7 @@ def _handle_merge(
     pr_author_login = str(getattr(getattr(pr, "user", None), "login", ""))
     current_labels = {str(getattr(lbl, "name", "")) for lbl in getattr(pr, "labels", [])}
 
-    # Step 2: idempotency short-circuit (WF-03). Eyes already posted above.
+    # Step 2: idempotency short-circuit. Eyes already posted above.
     if _LABEL_QUEUED in current_labels or _LABEL_ACTIVE in current_labels:
         # Re-derive queues for the comment upsert; this is cheap and lets the
         # second /merge refresh the status comment if anything has drifted.
@@ -527,8 +452,8 @@ def _handle_merge(
         )
         return 0
 
-    # Step 2: self-bootstrap rejection (DOG-08 / RFC §8). NO state mutation
-    # on rejection — no labels, no eyes, no status comment.
+    # Step 3: self-bootstrap rejection (RFC §8). NO state mutation on
+    # rejection — no labels, no eyes, no status comment.
     files_resp = client.rest.pulls.list_files(owner, repo, pr_number)
     changed_paths_list: list[str] = [
         str(f.filename) for f in (files_resp.parsed_data or [])
@@ -545,7 +470,7 @@ def _handle_merge(
         _post_comment(client, owner, repo, pr_number, body)
         return 0
 
-    # Step 3: permission check (WF-01 — live API; NEVER author_association).
+    # Step 4: permission check (live API; never author_association).
     eligible, role_name = _check_perm(
         client,
         owner,
@@ -564,12 +489,12 @@ def _handle_merge(
         _post_comment(client, owner, repo, pr_number, body)
         return 0
 
-    # Step 4: derive the per-PR queue set via the RFC §4.2 pathmap.
+    # Step 5: derive the per-PR queue set via the RFC §4.2 pathmap.
     changed_paths = tuple(changed_paths_list)
     queues = queues_for_paths(changed_paths, config)
 
-    # DOG-08 (no opted-in path) — single, more specific comment than the
-    # generic gate failure message.
+    # No opted-in path — single, more specific comment than the generic
+    # gate failure message.
     if not queues:
         body = (
             "`/merge` rejected: this PR touches no opted-in queue paths "
@@ -580,7 +505,7 @@ def _handle_merge(
         _post_comment(client, owner, repo, pr_number, body)
         return 0
 
-    # Step 5: at-enqueue gates (WF-02).
+    # Step 6: at-enqueue gates.
     failed_gates = _check_at_enqueue_gates(
         client, owner, repo, pr_number, pr, queues,
         require_approval=config.require_approval_at_enqueue,
@@ -589,13 +514,13 @@ def _handle_merge(
         body = (
             "`/merge` rejected: the following at-enqueue gates failed: "
             f"{', '.join(f'`{g}`' for g in failed_gates)}. Re-post `/merge` "
-            "once each condition is addressed (RFC §4.3 / WF-02)."
+            "once each condition is addressed (RFC §4.3)."
         )
         _post_comment(client, owner, repo, pr_number, body)
         return 0
 
-    # Step 7: success — label apply, status comment. Eyes already posted
-    # at Step 0 (WF-12 ack-receipt) so we don't double-post here.
+    # Step 7: success — label apply, status comment. Eyes already posted at
+    # Step 0 so we don't double-post here.
     _apply_labels(client, owner, repo, pr_number, queues)
     _upsert_status_comment(
         client,
@@ -624,13 +549,13 @@ def _handle_dequeue(
 ) -> int:
     """End-to-end /dequeue dispatch. Returns 0 on success.
 
-    Currently does NOT re-run the at-enqueue perm check on dequeue —
-    anyone who can comment on the PR may dequeue it (RFC §4.5 is silent
-    on the exact perm boundary; Phase 4 may tighten this). Eyes-reaction
-    is posted as the visible ack; status comment is upserted to an
-    "ejected" state with reason "/dequeue requested".
+    Does NOT re-run the at-enqueue perm check on dequeue — anyone who can
+    comment on the PR may dequeue it (RFC §4.5 is silent on the exact perm
+    boundary). Eyes-reaction is posted as the visible ack; the status
+    comment is upserted to an "ejected" state with reason
+    "/dequeue requested".
     """
-    _ = commenter_login  # reserved for Phase 4 perm tightening
+    _ = commenter_login  # reserved for future perm tightening
     pr_resp = client.rest.pulls.get(owner, repo, pr_number)
     pr = pr_resp.parsed_data
     pr_author_login = str(getattr(getattr(pr, "user", None), "login", ""))
@@ -682,8 +607,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="rocm-mq-handle",
         description=(
-            "Phase 3 plan 03-06 command handler — dispatches /merge and "
-            "/dequeue from a GitHub issue_comment webhook payload."
+            "Command handler — dispatches /merge and /dequeue from a "
+            "GitHub issue_comment webhook payload."
         ),
     )
     parser.add_argument(
@@ -705,7 +630,7 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
       - 0 on every "handled" outcome (successful enqueue, idempotent
         short-circuit, self-bootstrap rejection, perm rejection, gate
-        rejection, DOG-08 rejection, non-/merge comment skip,
+        rejection, no-opted-in-path rejection, non-/merge comment skip,
         non-created event skip, non-PR-comment skip).
       - 1 on any uncaught exception (traceback printed to stderr).
       - 2 on usage errors (malformed --repo or missing GITHUB_TOKEN).
@@ -743,9 +668,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _run(args, owner, repo, token)
     except Exception as exc:
-        # Preserve the full traceback — WR-04: operators debugging a
-        # production failure need module:line attribution, not just
-        # repr(exc).
+        # Preserve the full traceback so operators debugging a production
+        # failure get module:line attribution, not just repr(exc).
         print(f"error: {type(exc).__name__}: {exc!r}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         return 1

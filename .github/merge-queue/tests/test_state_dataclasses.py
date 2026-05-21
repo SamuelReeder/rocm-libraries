@@ -202,7 +202,7 @@ def test_anti_pydantic_canary_pydantic_not_imported() -> None:
     Run in a clean subprocess so the check is not polluted by other tests in
     this session that legitimately import ``rocm_mq.gh`` (which transitively
     pulls in githubkit -> pydantic). The pure-layer contract is that importing
-    ``rocm_mq`` itself — the public Phase 1 surface — does NOT drag pydantic
+    ``rocm_mq`` itself — the public API surface — does NOT drag pydantic
     into sys.modules; importing the I/O sibling ``rocm_mq.gh`` is allowed to.
     """
     import subprocess

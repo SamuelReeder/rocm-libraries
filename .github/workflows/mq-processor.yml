@@ -1,44 +1,8 @@
-# NOTE: This file is in SELF_BOOTSTRAP_PATHS — /merge on PRs touching this
-# file requires manual maintainer merge (RFC §8). The Phase 3 handler
-# (rocm_mq.cmd_handle.is_self_bootstrap) rejects auto-enqueue when this
-# file (or anything else under .github/workflows/**) is in the diff.
+# .github/workflows/mq-processor.yml — merge-queue processor (RFC §4.6).
 #
-# Phase 3 plan 03-08 delivery: cron-driven processor cycle.
-#   - Schedule:           cron '*/3 * * * *' — fires every 3 minutes.
-#   - workflow_dispatch:  manual trigger with a dry-run boolean input
-#                         (WF-07: --dry-run flag exposure).
-#   - Single job:         process — runs rocm_mq.cmd_process.run_process_cycle
-#                         end-to-end against the real GitHub API using an
-#                         App installation token.
-#   - Artifact:           cycle-summary.md uploaded each cycle (Wave-4
-#                         dogfood drivers download via the artifacts API
-#                         — RESEARCH.md Area #11).
-#
-# Token discipline (RFC §4.9):
-#   - GITHUB_TOKEN (workflow default, contents: read) only used by the
-#     pre-flight step (read-only — Check 1 default-branch + Check 3
-#     PATH_TO_QUEUES loadable). Pre-flight runs BEFORE the App-token mint
-#     so a misconfigured fork never even holds the App installation
-#     credential (plan 03-04 threat T-03-04-01 carried through).
-#   - App installation token (actions/create-github-app-token@v3,
-#     SHA-pinned) carries every write in the cycle: label flips, status
-#     posts, status-comment upserts, develop-merge pushes, squash merges.
-#
-# Concurrency property (RFC §4.7; CLAUDE.md "What NOT to Use"):
-#   The STATIC `mq-processor` group + `cancel-in-progress: false` is
-#   load-bearing. The 2025 `queue:` keyword is FORBIDDEN here — it would
-#   defeat the stateless-processor invariant ("evicted = skipped tick =
-#   next cycle catches up", per CLAUDE.md). Pitfall 9: the group name is
-#   the literal `mq-processor`, NEVER `${{ github.ref }}` — a per-ref
-#   group would let a malicious branch create a parallel queue.
-#
-# Pitfall 1 carry-through: the only checkout in this file pins
-# `ref: refs/heads/develop` with `persist-credentials: false` and
-# `sparse-checkout: .github/merge-queue` — same hardening as
-# mq-handler.yml. The cron and workflow_dispatch triggers do NOT carry
-# untrusted-fork content the way pull_request_target does, but the
-# discipline is uniform across the merge-queue workflow surface so
-# AUDIT-02 (Phase 4 lint) can enforce a single rule.
+# Runs every 3 minutes and on manual dispatch. Discovers queued PRs, derives
+# their state, and runs the activation/squash decision loop (RFC §4.6/§4.7).
+# This file is on the self-bootstrap protection list (RFC §8).
 
 name: mq-processor
 
@@ -52,23 +16,14 @@ on:
         type: boolean
         default: false
 
-# Workflow-level default deny-elevation (Pitfall 16). The single job
-# re-declares the scope it actually needs; this read-only default is the
-# fall-back for any future job added without an explicit permissions block.
+# Workflow-level default deny-elevation. Jobs that omit a permissions block
+# inherit this read-only default.
 permissions:
   contents: read
 
-# Stateless-processor concurrency (RFC §4.7). The group is the STATIC
-# literal `mq-processor` (Pitfall 9 — NEVER interpolate ${{ github.ref }};
-# a per-ref group would let any malicious branch open a parallel queue).
-# `cancel-in-progress: false` is non-negotiable: cron-fire interrupting a
-# mid-squash cycle would leave half-applied state, breaking the §4.6
-# crash-safety argument. The 2025 `queue:` keyword is intentionally
-# absent — CLAUDE.md "What NOT to Use" makes this concrete: at most one
-# pending run waits; a third cron fire EVICTS the pending one, and the
-# next cycle reconstructs queue state from canonical sources (RFC §4.6),
-# so an evicted run is functionally a skipped tick. That property is
-# exactly what the stateless-processor design buys.
+# Static concurrency group with cancel-in-progress: false per RFC §4.7.
+# Only one processor cycle runs at a time; a skipped tick is safe because
+# the next cycle reconstructs all state from the GitHub API.
 concurrency:
   group: mq-processor
   cancel-in-progress: false
@@ -76,43 +31,30 @@ concurrency:
 jobs:
   process:
     runs-on: ubuntu-latest
-    # Per-job timeout MUST be < the 3-min cron interval (Pitfall 6).
-    # 5 min is the planner-confirmed budget — typical cycles run in
-    # ~10-30s; a runaway cycle past 5 min is killed and the next cron
-    # fire is the catch-up. (Cron interval is 3 min; 5 min ceiling
-    # tolerates one overrun before back-to-back fires would queue.)
+    # Per-job timeout must be < the 3-min cron interval to bound overrun.
     timeout-minutes: 5
 
-    # Environment scoping (plan 03-05): mq-secrets is restricted to the
-    # develop ref via the deployment-branches rule. Both `schedule:` and
-    # `workflow_dispatch:` triggers resolve GITHUB_REF to the workflow
-    # file's branch (develop on a default-branch-only workflow), so the
-    # Environment secret resolves cleanly. Pitfall 9 (Phase 3 patterns)
-    # also applies here — the static concurrency group prevents a
-    # foreign ref from grabbing the Environment via a stolen group name.
+    # Environment scoping: mq-secrets is restricted to the develop ref via
+    # the deployment-branches rule. Both schedule and workflow_dispatch
+    # triggers resolve GITHUB_REF to the workflow file's branch (develop),
+    # so the Environment secret resolves cleanly.
     environment: mq-secrets
 
-    # Per-job permission scoping. The processor only ever READS via
-    # GITHUB_TOKEN (the pre-flight step uses it for the public-API repo
-    # GET + the path_to_queues.yml contents fetch). Every write — labels,
-    # status posts, status-comment upserts, develop merges, squash merges
-    # — flows through the App-minted token below, not GITHUB_TOKEN.
+    # Per-job permission scoping. The processor only READS via GITHUB_TOKEN
+    # (the pre-flight step uses it for the public-API repo GET +
+    # path_to_queues.yml contents fetch). Every write — labels, status
+    # posts, status-comment upserts, develop merges, squash merges — flows
+    # through the App-minted token below, not GITHUB_TOKEN.
     permissions:
       contents: read
 
     steps:
-      # STEP 1: Pre-flight runs FIRST, BEFORE the App-token mint
-      # (RESEARCH.md Area #23 — load-bearing step ordering). A
-      # misconfigured fork (default branch != develop, or path_to_queues
-      # unparseable) must never even hold the App installation token
-      # (plan 03-04 threat T-03-04-01). Uses the read-only GITHUB_TOKEN.
-      #
-      # The preflight binary lives in the repo at HEAD of develop, so we
-      # need a transient sparse-checkout of the merge-queue package
-      # first. Same discipline as mq-handler.yml: ref pinned to
-      # refs/heads/develop, persist-credentials:false. Pitfall 1
-      # carry-through (no untrusted-fork content ever checked out under
-      # the App-trust scope).
+      # Pre-flight runs before the App-token mint: a misconfigured fork
+      # (default branch != develop, or path_to_queues unparseable) must
+      # never even hold the App installation token. Uses the read-only
+      # GITHUB_TOKEN. The preflight binary lives in the repo at HEAD of
+      # develop, so we need a transient sparse-checkout of the merge-queue
+      # package first.
       - name: Checkout merge-queue package from develop (pre-flight)
         # SHA-pinned per RFC §8 self-bootstrap protection.
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.2.2
@@ -134,27 +76,23 @@ jobs:
         working-directory: .github/merge-queue
         run: pip install -e .
 
-      - name: Pre-flight (WF-10 default-branch + PATH_TO_QUEUES loadable)
+      - name: Pre-flight (default-branch + PATH_TO_QUEUES loadable)
         working-directory: .github/merge-queue
         env:
           # Read-only GITHUB_TOKEN — pre-flight does no writes.
           GITHUB_TOKEN: ${{ github.token }}
         run: python -m rocm_mq preflight --repo ${{ github.repository }}
 
-      # STEP 2: Mint the App installation token AFTER pre-flight passes.
-      # actions/create-github-app-token@v3 (SHA-pinned per CLAUDE.md "pin
-      # by SHA, not tag"). Per-job permission-* inputs scope the App
-      # token DOWN from the App's full installation permissions to
-      # exactly what the processor cycle writes (RFC §4.9 token split):
-      #   - contents:       write — develop-merge push during _handle_activate;
-      #                             squash-merge during _handle_squash.
+      # Mint per-job; each job gets the minimum scope per RFC §4.9
+      # token-split:
+      #   - contents:       write — develop-merge push during activate;
+      #                             squash-merge during squash.
       #   - pull-requests:  write — pulls.get/merge/squash; status edits.
       #   - issues:         write — label flips (mq:queued ↔ mq:active);
       #                             status-comment upsert via comments API.
       #   - statuses:       write — merge-queue/managed + merge-queue/active
       #                             status post.
-      # The action's post-step revokes the token automatically (bounds
-      # blast radius per CLAUDE.md "Token minting" rationale).
+      # The action's post-step revokes the token automatically.
       - name: Mint App installation token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
@@ -167,19 +105,10 @@ jobs:
           permission-issues: write
           permission-statuses: write
 
-      # STEP 3: Run one processor cycle. Branches on the dry-run input
-      # (WF-07 — the underlying --dry-run flag was shipped in Phase 2;
-      # this workflow exposes it via workflow_dispatch). Note the App-
-      # identity Check 2 (Pitfall 2 / RESEARCH Area #23 Check 2) is
-      # satisfied PASSIVELY here — process_cycle's startup calls
-      # resolve_app_identity, and a slug-pin mismatch surfaces as a
-      # processor cycle error with clear cause (intentional deferral
-      # from pre-flight per plan 03-04 Task 1 and plan 03-08 must_haves).
-      #
-      # MQ_CYCLE_SUMMARY_PATH points at the artifact upload's `path:`
-      # (RESEARCH.md Area #11): process_cycle writes the rendered summary
-      # to that file in addition to appending to $GITHUB_STEP_SUMMARY,
-      # and Step 4 below uploads the file regardless of cycle outcome.
+      # Run one processor cycle. Branches on the dry-run input.
+      # MQ_CYCLE_SUMMARY_PATH points at the artifact upload's `path:`:
+      # process_cycle writes the rendered summary there in addition to
+      # appending to $GITHUB_STEP_SUMMARY.
       - name: Process cycle
         working-directory: .github/merge-queue
         env:
@@ -189,17 +118,11 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           DRY_RUN: ${{ inputs.dry-run || 'false' }}
           MQ_CYCLE_SUMMARY_PATH: ${{ github.workspace }}/.github/merge-queue/cycle-summary.md
-          # App identity for resolve_app_identity (gh.py). The slug comes
-          # from the action's JWT-attested output (the action knows the
-          # slug because it just authenticated as the App); MQ_APP_ID
-          # comes from a repo var because the action does not echo it
-          # back (RFC §4.3.1 / 03-wr-01 fix).
-          #
-          # Installation tokens cannot call /app — apps.get_authenticated
-          # returns HTTP 401. resolve_app_identity MUST take this
-          # env-var-trust path on the runtime workflow; the live JWT
-          # call is preserved only for local-dev where the operator
-          # holds the App private key directly.
+          # App identity for resolve_app_identity. Installation tokens
+          # cannot call /app (apps.get_authenticated returns 401), so
+          # App identity is passed via env: the slug comes from the
+          # action's JWT-attested output and MQ_APP_ID comes from a
+          # repo var because the action does not echo it back.
           MQ_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           MQ_APP_ID: ${{ vars.MQ_APP_ID }}
         run: |
@@ -209,17 +132,13 @@ jobs:
             python -m rocm_mq process-cycle --repo ${{ github.repository }}
           fi
 
-      # STEP 4: Publish the cycle-summary.md artifact so Wave-4 dogfood
-      # drivers can download a structured copy of the per-cycle summary
-      # via the GitHub artifacts API (raw run-logs zip is not cleanly
-      # parseable — RESEARCH.md Area #11). `if: always()` so a failed
-      # cycle still uploads whatever the file sink wrote before exit.
-      # retention-days:30 bounds the storage footprint; queue-topology
-      # data is not PII (T-03-08-05 accepted in the plan's threat model).
+      # Upload cycle summary so external tools can inspect outcomes without
+      # parsing raw logs. `if: always()` so a failed cycle still uploads
+      # whatever the file sink wrote before exit. retention-days:30 bounds
+      # the storage footprint; queue-topology data is not PII.
       - name: Upload cycle summary as artifact
         if: always()
-        # SHA-pinned per RFC §8. SHA resolved 2026-05-20 via:
-        #   gh api repos/actions/upload-artifact/git/refs/tags/v4 --jq .object.sha
+        # SHA-pinned per RFC §8.
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: cycle-summary-${{ github.run_id }}

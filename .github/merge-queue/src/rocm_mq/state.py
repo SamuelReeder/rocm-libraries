@@ -3,13 +3,11 @@ rocm_mq.state — Frozen-dataclass state model for the federated merge queue.
 
 All dataclasses in this module are ``@dataclass(frozen=True, slots=True)``.
 All collections are ``tuple[T, ...]`` or ``frozenset[T]`` — never ``list``, ``set``,
-or ``dict`` (Pitfall 10: mutable-default aliasing; RFC §4.9 pure-layer contract).
+or ``dict`` (avoids mutable-default aliasing; RFC §4.9 pure-layer contract).
 
-Two PR dataclass families (D-01):
-  Raw*   — mirror the GitHub API response shape; constructed by Phase 2 ``snapshot.py``.
+Two PR dataclass families:
+  Raw*   — mirror the GitHub API response shape; constructed by the snapshot loader.
   Derived — ``PRState``, ``Snapshot``; output of ``derive_pr``/``derive_snapshot``.
-
-Design decisions locked in CONTEXT.md (D-01..D-04) and RESEARCH.md.
 """
 
 from __future__ import annotations
@@ -22,7 +20,7 @@ if TYPE_CHECKING:
     pass
 
 # ---------------------------------------------------------------------------
-# Raw family — mirror the GitHub API, unfiltered (D-02)
+# Raw family — mirror the GitHub API, unfiltered
 # ---------------------------------------------------------------------------
 
 
@@ -45,7 +43,8 @@ class CommitStatus:
     """A single commit status on a PR's head SHA.
 
     Carries full creator metadata so the pure derive can apply BOTH the context
-    filter and the creator (App-identity) filter (D-02 — Pitfall 2 family).
+    filter and the creator (App-identity) filter — see RFC §4.3.1 (the
+    activation status binding is only trusted when posted by the App identity).
     """
 
     context: str
@@ -72,7 +71,7 @@ class LabelEvent:
     """A label-applied / label-removed timeline event on a PR.
 
     The ``mq:queued`` label-application events with ``is_app_identity_actor(actor)``
-    are the canonical FIFO timestamp source (Claude's Discretion in CONTEXT.md).
+    are the canonical FIFO timestamp source (RFC §4.6 enqueued_at).
     """
 
     label_name: str
@@ -83,16 +82,16 @@ class LabelEvent:
 
 @dataclass(frozen=True, slots=True)
 class RawPRState:
-    """Raw GitHub API state for a single PR — unfiltered, unprocessed (D-01, D-02).
+    """Raw GitHub API state for a single PR — unfiltered, unprocessed.
 
     ``head_statuses`` carries EVERY commit status on the current head SHA.
     ``mq_queued_label_events`` carries EVERY ``mq:queued`` label timeline event.
     The pure ``derive_pr`` applies all filtering (context + creator).
 
-    Note: per 03-wr-09 design refactor, required CI check evaluation is
-    NOT done by the queue. Branch protection is the single source of truth
-    for which checks gate a merge; the executor reads GitHub's merge-API
-    response to translate protection-blocked merges into Eject actions.
+    Required CI check evaluation is NOT done by the queue — branch protection
+    is the single source of truth for which checks gate a merge (RFC §4.8);
+    the executor translates a protection-blocked merge-API response into an
+    Eject action.
     """
 
     number: int
@@ -105,25 +104,27 @@ class RawPRState:
 
 @dataclass(frozen=True, slots=True)
 class RawSnapshot:
-    """A raw snapshot of all relevant PRs fetched from the GitHub API (D-04)."""
+    """A raw snapshot of all relevant PRs fetched from the GitHub API."""
 
     prs: tuple[RawPRState, ...]
 
 
 # ---------------------------------------------------------------------------
-# Derived family — output of ``derive_pr`` / ``derive_snapshot`` (D-01, D-04)
+# Derived family — output of ``derive_pr`` / ``derive_snapshot``
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class PRState:
-    """Derived PR state — contains only fields the decision algorithm reads (D-03).
+    """Derived PR state — contains only fields the decision algorithm reads.
 
     Renderer-only fields (``author_login``, PR title, blocker PR numbers, run URL)
-    are explicitly absent — they live in ``RenderContext`` (D-03).
+    are explicitly absent — they live in ``RenderContext`` so Hypothesis
+    strategies for ``PRState`` stay free of noise that does not affect
+    decision-layer output.
 
     ``enqueued_at`` must be tz-aware; ``is_validly_active`` is computed by
-    ``derive_pr`` applying BOTH context and creator filters (D-02).
+    ``derive_pr`` applying BOTH context and creator filters (RFC §4.3.1).
     """
 
     number: int
@@ -136,27 +137,27 @@ class PRState:
 
 @dataclass(frozen=True, slots=True)
 class Snapshot:
-    """Post-derive flat tuple of derived PR states — input to ``decide_cycle`` (D-04).
+    """Post-derive flat tuple of derived PR states — input to ``decide_cycle``.
 
     ``now`` is NOT embedded here; it is passed as a separate arg to ``decide_cycle``
-    so Hypothesis tests can vary time independently of PR fixtures (D-04 rationale).
+    so Hypothesis tests can vary time independently of PR fixtures.
     """
 
     prs: tuple[PRState, ...]
 
 
 # ---------------------------------------------------------------------------
-# Q1 / Q4 resolution sum types — locked in CONTEXT.md open questions
+# Derive failure / partial sum types
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class DeferredPR:
-    """Second arm of ``derive_pr``'s return type (Q1 resolution).
+    """Second arm of ``derive_pr``'s return type.
 
     Returned when raw derivation cannot produce a full ``PRState`` — e.g., when
-    no qualifying ``mq:queued`` label-application event exists (Pitfall 4:
-    timeline eventual consistency).
+    no qualifying ``mq:queued`` label-application event exists yet because of
+    GitHub timeline eventual consistency.
     """
 
     number: int
@@ -165,11 +166,11 @@ class DeferredPR:
 
 @dataclass(frozen=True, slots=True)
 class PartialPRState:
-    """Minimal PR record used as the second arm of ``Defer.pr`` (Q4 resolution).
+    """Minimal PR record used as the second arm of ``Defer.pr``.
 
     Carried when the executor emitted a ``Defer`` action for a PR that could not
-    be fully derived. Exported from ``state.py`` so Phase 2 / Phase 4 callers can
-    type-check ``Defer.pr`` as ``PRState | PartialPRState``.
+    be fully derived. Exported so downstream callers can type-check
+    ``Defer.pr`` as ``PRState | PartialPRState``.
     """
 
     number: int
@@ -179,7 +180,6 @@ class PartialPRState:
 
 # ---------------------------------------------------------------------------
 # Action union — PEP 604, variant dataclasses + assert_never exhaustiveness
-# (CONTEXT.md Claude's Discretion + Pattern 2 in RESEARCH.md)
 # ---------------------------------------------------------------------------
 
 
@@ -218,7 +218,7 @@ class Defer:
     """Defer processing a PR to the next cycle.
 
     ``pr`` is ``PRState | PartialPRState``: a full derived state when the PR
-    enqueued successfully; a partial record when derivation failed (Q4 resolution).
+    enqueued successfully; a partial record when derivation failed.
     """
 
     pr: PRState | PartialPRState
@@ -243,8 +243,8 @@ class AppIdentity:
     ``bot_user_id`` is used by ``is_app_identity_actor`` for timeline event checks
     (timeline events lack the app sub-object; the bot's user_id is stable).
 
-    Both IDs are resolved at App-registration time. For Phase 1 tests, the
-    sentinel is ``AppIdentity(slug="rocm-mq", app_id=12345, bot_user_id=99999)``.
+    Both IDs are resolved at App-registration time. Unit tests use the
+    sentinel ``AppIdentity(slug="rocm-mq", app_id=12345, bot_user_id=99999)``.
     """
 
     slug: str
@@ -262,7 +262,7 @@ class MergeQueueConfig:
 
     String-typed fields have defaults matching the RFC §4.3 label conventions.
     No defaults on structural fields (``all_queues``, ``path_to_queues``, ``app_identity``)
-    to avoid accidental aliasing of mutable containers (Pitfall 10 family).
+    to avoid accidental aliasing of mutable containers.
     """
 
     all_queues: tuple[str, ...]
@@ -272,27 +272,27 @@ class MergeQueueConfig:
     queued_label: str = "mq:queued"
     active_label: str = "mq:active"
     label_prefix: str = "mq:"
-    # WF-02 at-enqueue ≥1-approval gate. RFC §5 requires this for upstream;
-    # the fork-dogfood phase overrides to False via env (MQ_REQUIRE_APPROVAL=0)
-    # because the fork has only one collaborator and PR authors cannot self-
-    # approve. PORT-02: must be True for upstream port (default already is).
+    # At-enqueue ≥1-approval gate (RFC §5). DOGFOOD-ONLY: the fork overrides
+    # this to False via MQ_REQUIRE_APPROVAL=0 because the fork has only one
+    # collaborator and PR authors cannot self-approve. PORT-02: must be True
+    # for the upstream port (default already is).
     require_approval_at_enqueue: bool = True
 
 
 # ---------------------------------------------------------------------------
-# Render context — renderer-only fields separated from decision state (D-03)
+# Render context — renderer-only fields separated from decision state
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class RenderContext:
-    """Renderer-only data for a single PR status comment (D-03).
+    """Renderer-only data for a single PR status comment.
 
     These fields are absent from ``PRState`` deliberately — they are not read
     by ``decide_cycle`` and their presence would pollute Hypothesis strategies
     with noise generators for fields that do not affect algorithm output.
 
-    Populated by ``cmd_handle.py`` (Phase 3) / ``cmd_process.py`` (Phase 2).
+    Populated at the I/O boundary (handler and processor entry points).
     """
 
     author_login: str
@@ -307,11 +307,7 @@ class RenderContext:
 
 @dataclass(frozen=True, slots=True)
 class ActionOutcome:
-    """Result of executing a single action (Phase 2 executor populates this).
-
-    In Phase 1, this is a stub — renderers tolerate it as optional decoration
-    (``success=True``, ``error_message=None`` for hypothetical outcomes in tests).
-    """
+    """Result of executing a single action — populated by the executor."""
 
     action: Action
     success: bool
@@ -320,9 +316,9 @@ class ActionOutcome:
 
 @dataclass(frozen=True, slots=True)
 class CycleRenderContext:
-    """Renderer-only data for the per-cycle ``$GITHUB_STEP_SUMMARY`` (D-03).
+    """Renderer-only data for the per-cycle ``$GITHUB_STEP_SUMMARY``.
 
-    Populated by ``cmd_process.py`` (Phase 2) after the cycle completes.
+    Populated by the processor entry point after the cycle completes.
     ``queue_depths`` maps queue name → number of PRs in that queue this cycle.
     """
 

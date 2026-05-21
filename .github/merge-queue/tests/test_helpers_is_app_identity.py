@@ -2,7 +2,7 @@
 test_helpers_is_app_identity.py — Unit + property tests for ``is_app_identity``.
 
 PURE-05: ``is_app_identity`` checks ``type == "Bot"`` AND ``app_slug == expected.slug``
-AND ``app_id == expected.app_id`` (triple-check, RFC §4.3.1 + Pitfall 2).
+AND ``app_id == expected.app_id`` (triple-check, RFC §4.3.1).
 
 Tests:
 1. Parametrized canonical + 5 non-canonical fixture variants (6 parametrized cases).

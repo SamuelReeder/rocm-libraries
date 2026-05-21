@@ -1,25 +1,24 @@
 """
-rocm_mq.gh — Thin synchronous wrapper around githubkit.GitHub (IO-01).
+rocm_mq.gh — Thin synchronous wrapper around githubkit.GitHub.
 
-PURE-09 compliance statement: this module is NOT in PURE_LAYER_MODULES; it
-intentionally imports githubkit. It is the ONLY approved site for
-``GitHub(token=...)`` construction in the rocm_mq package. All other Phase 2+
-modules (snapshot.py, executor.py, cmd_process.py) consume this module's
-``GitHubClient`` and never touch githubkit directly.
+This module is the I/O layer; it intentionally imports githubkit and is the
+ONLY approved site for ``GitHub(token=...)`` construction in the rocm_mq
+package. All other modules (snapshot.py, executor.py, cmd_process.py)
+consume ``GitHubClient`` and never touch githubkit directly.
 
-Public surface (Phase 2 contract):
+Public surface:
 - ``GitHubClient(token: str)`` — sync wrapper exposing ``.rest`` (a
   ``_RetryProxy`` over the githubkit rest switcher; every method call
-  automatically goes through ``request_with_retry``, WR-01) +
+  automatically goes through ``request_with_retry``) +
   ``request_with_retry`` for callers needing explicit control.
 - ``resolve_app_identity(client) -> AppIdentity`` — startup call that resolves
-  ``bot_user_id`` via the two-step ``apps.get_authenticated`` +
-  ``users.get_by_username(slug + "[bot]")`` pattern. Addresses OQ-1 / A1 from
-  RESEARCH.md: the Integration model returned by ``apps.get_authenticated`` does
-  not carry the bot user id directly; the separate user lookup is required.
-- ``CorruptSquashError`` — raised by the Phase 2 executor when post-squash
-  parent-SHA verification fails. Lives here so executor.py + tests can import
-  it from a single, stable location.
+  ``bot_user_id`` via a two-step ``apps.get_authenticated`` +
+  ``users.get_by_username(slug + "[bot]")`` pattern. The Integration model
+  returned by ``apps.get_authenticated`` does not carry the bot user id
+  directly, so the separate user lookup is required.
+- ``CorruptSquashError`` — raised by the executor when post-squash
+  verification fails. Lives here so executor.py and tests can import it from
+  a single, stable location.
 
 Retry policy:
 - Only ``SecondaryRateLimitExceeded`` triggers retry; primary rate limits and
@@ -64,7 +63,7 @@ class CorruptSquashError(RuntimeError):
 
 
 class _RetryProxy:
-    """Wraps a githubkit namespace so every callable goes through retry (WR-01).
+    """Wraps every ``client.rest.*`` call so it goes through ``request_with_retry``.
 
     Attribute lookup on the wrapped object returns:
     - For callables (the actual API methods like ``repos.merge``,
@@ -120,11 +119,11 @@ class GitHubClient:
 
     Construction takes a pre-minted installation token (typically from
     ``actions/create-github-app-token@v3`` in the GHA workflow). No App private
-    key handling — that surface stays in the GHA action per CLAUDE.md.
+    key handling — that surface stays in the GHA action.
 
     Exposes ``.rest`` as a passthrough to ``githubkit.GitHub.rest`` WRAPPED in
     a ``_RetryProxy`` so every API method call is automatically run through
-    ``request_with_retry`` (WR-01). ``request_with_retry`` is still exposed for
+    ``request_with_retry``. ``request_with_retry`` is still exposed for
     callers that need explicit control (e.g., to override ``max_retries``).
     """
 
@@ -138,7 +137,7 @@ class GitHubClient:
         """Forward to ``githubkit.GitHub.rest`` wrapped in ``_RetryProxy``.
 
         Typed as ``Any`` to avoid pulling githubkit's RestVersionSwitcher type
-        into the static surface — Phase 2 callers use the namespaces directly
+        into the static surface — callers use the namespaces directly
         (e.g., ``client.rest.apps.get_authenticated()``) and githubkit's own
         typed responses cover the per-call return shapes.
 
@@ -167,9 +166,9 @@ class GitHubClient:
         Tests patch ``time.sleep`` (via ``monkeypatch.setattr("rocm_mq.gh.time.sleep",
         ...)``) to avoid real waits. Production code receives real sleeps.
 
-        WR-01: the ``_RetryProxy`` on ``self.rest`` calls this method
-        automatically for every API method, so callers normally do not need
-        to invoke it directly.
+        The ``_RetryProxy`` on ``self.rest`` calls this method automatically
+        for every API method, so callers normally do not need to invoke it
+        directly.
         """
         last_exc: SecondaryRateLimitExceeded | None = None
         for attempt in range(1, max_retries + 1):
@@ -187,7 +186,7 @@ class GitHubClient:
 
 
 # ---------------------------------------------------------------------------
-# resolve_app_identity — startup-only call (OQ-1 / A1 resolution)
+# resolve_app_identity — startup-only call
 # ---------------------------------------------------------------------------
 
 
@@ -199,16 +198,15 @@ def resolve_app_identity(client: GitHubClient) -> AppIdentity:
     1. **Env-var-trust path (runtime / production)** — when BOTH ``MQ_APP_SLUG``
        and ``MQ_APP_ID`` are set, trust them. The workflow gets the slug from
        ``actions/create-github-app-token@v3``'s ``app-slug`` output (the action
-       has JWT-attested it), and the numeric ``MQ_APP_ID`` from a repo variable
-       set during plan 03-05's operator setup. ``bot_user_id`` still comes from
-       a live ``users.get_by_username`` lookup (works with installation tokens,
-       fails closed if the slug is wrong because the bot login won't resolve).
+       has JWT-attested it), and the numeric ``MQ_APP_ID`` from a repo
+       variable. ``bot_user_id`` still comes from a live
+       ``users.get_by_username`` lookup (works with installation tokens, fails
+       closed if the slug is wrong because the bot login won't resolve).
 
        This path is required because the installation token minted by the
        action **cannot** call ``/app`` endpoints — those require App JWT
        authentication. Calling ``apps.get_authenticated`` from the runtime
-       client returns HTTP 401 (live-fork dispatch run 26173804944 on
-       2026-05-20 confirmed this).
+       client returns HTTP 401.
 
     2. **JWT fallback (local-dev)** — when env vars are absent OR malformed,
        fall back to the original ``apps.get_authenticated`` + ``users.get_by_username``
@@ -236,8 +234,7 @@ def resolve_app_identity(client: GitHubClient) -> AppIdentity:
             app_id = int(app_id_env)
         except ValueError as exc:
             msg = (
-                f"MQ_APP_ID env var must parse as int, got {app_id_env!r}. "
-                "Check the repo variable set during plan 03-05."
+                f"MQ_APP_ID env var must parse as int, got {app_id_env!r}."
             )
             raise ValueError(msg) from exc
         slug = slug_env

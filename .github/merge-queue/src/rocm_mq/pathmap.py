@@ -14,7 +14,7 @@ provider/integration-tests edge:
     the downstream direction.
   - Individual provider paths enter only their own queue.
 
-Preconditions (Phase 2 / Phase 4 ``cmd_validate.py`` responsibility):
+Preconditions (caller responsibility):
   - ``config.path_to_queues`` is sorted longest-prefix-first. The function
     uses the *first* matching prefix for each path; a shorter prefix earlier
     in the list would shadow a longer one (wrong-answer bug, not crash).
@@ -43,9 +43,9 @@ def queues_for_paths(
     that shorter prefixes do not override the longer match.
 
     Returns ``frozenset()`` when no path matches any opted-in prefix.  The
-    empty set is a valid return value — the caller (``cmd_handle.py`` or the
-    handler workflow) interprets it as "this PR has no opted-in paths; reject
-    ``/merge``" (RFC §4.4).
+    empty set is a valid return value — the caller (the handler workflow)
+    interprets it as "this PR has no opted-in paths; reject ``/merge``"
+    (RFC §4.4).
 
     Args:
         paths: Normalized file paths changed in the PR (no ``./`` prefix, no

@@ -1,15 +1,13 @@
-"""
-tests/test_path_to_queues_yaml.py — Smoke tests for path_to_queues.yml.
+"""Smoke tests for path_to_queues.yml.
 
 These are PARSE-LEVEL tripwires only: yaml.safe_load succeeds, the top-level
 shape matches the handler/processor's expectations, every queue named in a
-path entry exists in the queues list, every queue has a required_checks
-entry, and the dogfood-canary routing is present.
+path entry exists in the queues list, and the dogfood-canary routing is
+present.
 
-Schema validation (graph-closure of upstream/downstream queue relationships,
-required-check string format, queue-name lexical rules) is Phase 4 — see
-03-CONTEXT.md `<deferred>` "PATH_TO_QUEUES schema validation" and the
-mq-config-validate.yml job planned there.
+Full schema validation (graph-closure of upstream/downstream queue
+relationships, queue-name lexical rules, etc.) is a future follow-up — a
+dedicated mq-config-validate workflow.
 
 Locate the YAML via pathlib so the test runs regardless of CWD (e.g., from
 the repo root, from .github/merge-queue, or via pytest-xdist worker).
@@ -41,7 +39,7 @@ def parsed() -> dict[str, object]:
 
 
 # ---------------------------------------------------------------------------
-# Parse-level tripwire (Task 3 RED gate).
+# Parse-level tripwire.
 # ---------------------------------------------------------------------------
 
 
@@ -54,12 +52,14 @@ def test_yaml_parseable() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Structural assertions (Task 4 — expanded smoke coverage).
+# Structural assertions (expanded smoke coverage).
 # ---------------------------------------------------------------------------
 
 
 def test_top_level_keys(parsed: dict[str, object]) -> None:
-    """Top-level keys are exactly {queues, paths} post 03-wr-09."""
+    """Top-level keys are exactly {queues, paths}: required-check evaluation
+    is delegated to branch protection, so no required_checks section ships
+    in this YAML."""
     assert set(parsed.keys()) == {"queues", "paths"}, (
         f"Unexpected top-level keys: {set(parsed.keys())}"
     )
@@ -74,18 +74,17 @@ def test_queues_is_list_of_seven_strings(parsed: dict[str, object]) -> None:
 
 
 def test_dogfood_canary_present(parsed: dict[str, object]) -> None:
-    """The synthetic `dogfood-canary` queue is in the queues list (DOG-03 dependency)."""
+    """The synthetic `dogfood-canary` queue is in the queues list."""
     assert "dogfood-canary" in parsed["queues"]
 
 
 def test_no_required_checks_section(parsed: dict[str, object]) -> None:
-    """Post 03-wr-09: required_checks section MUST NOT be present in the
-    YAML. Branch protection is the single source of truth for which
-    checks gate a merge."""
+    """No required_checks section: branch protection is the single source of
+    truth for which checks gate a merge."""
     assert "required_checks" not in parsed, (
-        "required_checks was removed per 03-wr-09 — branch protection is "
-        "now the source of truth. Configure required checks via Settings "
-        "→ Branches → Branch protection rules instead."
+        "required_checks must not be present — branch protection is the "
+        "source of truth. Configure required checks via Settings → Branches "
+        "→ Branch protection rules instead."
     )
 
 
@@ -104,8 +103,8 @@ def test_paths_reference_only_known_queues(parsed: dict[str, object]) -> None:
 def test_dogfood_path_routes_to_canary_only(parsed: dict[str, object]) -> None:
     """A paths entry exists whose path starts with `dogfood/` and routes ONLY to dogfood-canary.
 
-    This guarantees DOG-03's canary required check never affects opted-in real-code paths
-    (CONTEXT.md `<specifics>`: dogfood-canary is the ONLY non-real-code queue).
+    This guarantees the canary's required check never affects opted-in
+    real-code paths — dogfood-canary is the ONLY non-real-code queue.
     """
     matching = [
         e for e in parsed["paths"]

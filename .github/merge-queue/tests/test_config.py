@@ -1,14 +1,15 @@
-"""tests/test_config.py — Unit tests for rocm_mq.config.
+"""Unit tests for rocm_mq.config — self-bootstrap globs, RFC §4.8 YAML loader,
+and App-identity env-var names.
 
 Covers:
 - SELF_BOOTSTRAP_PATHS: type (tuple of str), membership of the four required
-  globs (RFC §8 self-bootstrap protection, CLAUDE.md branch-protection-as-code
-  integration), and the documented future-slot comment for ``terraform/github/**``.
-- load_from_develop: happy path (Contents API + base64 + safe_load returns dict),
-  develop-ref pinning, and safe_load enforcement against ``!!python/object`` tags
-  (T-03-02-01 mitigation per the plan's threat register).
-- APP_SLUG_ENV / APP_ID_ENV: literal env-var-name constants (consumed by
-  plan 03-06's handler for App identity pinning).
+  globs (RFC §8 self-bootstrap protection), and the documented future-slot
+  comment for ``terraform/github/**``.
+- load_from_develop: happy path (Contents API + base64 + safe_load returns
+  dict), develop-ref pinning, and safe_load enforcement against
+  ``!!python/object`` tags (YAML deserialization-RCE defence).
+- APP_SLUG_ENV / APP_ID_ENV: literal env-var-name constants for App identity
+  pinning.
 """
 
 from __future__ import annotations
@@ -57,8 +58,8 @@ def test_self_bootstrap_paths_contains_required_globs(required_glob: str) -> Non
 def test_self_bootstrap_paths_documents_future_slot() -> None:
     """The source file must mention 'terraform' in a future-slot comment.
 
-    Per CLAUDE.md "branch-protection-as-code integration (RFC §8)": the empty
-    slot for ``terraform/github/**`` (or equivalent IaC tool) is documented in
+    Branch-protection-as-code integration (RFC §8): the empty slot for
+    ``terraform/github/**`` (or equivalent IaC tool) is documented in
     a source comment so the next person to add Terraform / Probot-Settings
     knows where to extend the constant.
     """
@@ -66,8 +67,8 @@ def test_self_bootstrap_paths_documents_future_slot() -> None:
     assert source_path is not None
     source = Path(source_path).read_text(encoding="utf-8")
     assert "terraform" in source, (
-        "config.py must document the future terraform/github/** slot per "
-        "CLAUDE.md branch-protection-as-code guidance"
+        "config.py must document the future terraform/github/** slot for "
+        "branch-protection-as-code integration"
     )
 
 
@@ -143,8 +144,10 @@ def test_load_from_develop_uses_develop_ref() -> None:
 def test_load_from_develop_rejects_unsafe_yaml_tags() -> None:
     """safe_load (NOT load) MUST reject !!python/object code-execution tags.
 
-    Mitigation for T-03-02-01 per plan's threat register. The exact exception
-    class varies across PyYAML minor versions; accept any YAMLError subclass.
+    YAML deserialization-RCE defence: ``yaml.load`` with the default loader
+    will execute arbitrary Python from a ``!!python/object/apply:`` tag.
+    ``safe_load`` raises instead. The exact exception class varies across
+    PyYAML minor versions; accept any YAMLError subclass.
     """
     fake = FakeGitHub(FakeRepoState())
     _seed_contents(
@@ -163,12 +166,12 @@ def test_load_from_develop_rejects_unsafe_yaml_tags() -> None:
 
 
 def test_app_slug_env_constant() -> None:
-    """APP_SLUG_ENV pins the env-var NAME used by plan 03-06's handler."""
+    """APP_SLUG_ENV pins the env-var name read by the handler for App identity."""
     assert APP_SLUG_ENV == "MQ_APP_SLUG"
 
 
 def test_app_id_env_constant() -> None:
-    """APP_ID_ENV pins the env-var NAME used by plan 03-06's handler."""
+    """APP_ID_ENV pins the env-var name read by the handler for App identity."""
     assert APP_ID_ENV == "MQ_APP_ID"
 
 

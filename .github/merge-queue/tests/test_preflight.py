@@ -1,10 +1,10 @@
-"""tests/test_preflight.py — Unit tests for rocm_mq.preflight.
+"""Unit tests for rocm_mq.preflight — workflow-time configuration checks.
 
-Covers the comprehensive 2-check preflight (WF-10 + path_to_queues loadable)
-implemented per plan 03-04. The third RESEARCH.md Area #23 check (App identity
-slug-match) is DEFERRED to processor startup because apps.get_authenticated
-requires an App-token but preflight runs BEFORE the App-token mint and only
-holds the workflow's GITHUB_TOKEN.
+Covers the 2-check preflight (default-branch == develop + path_to_queues.yml
+loadable from the develop ref). A third check (App identity slug-match) is
+deferred to processor startup because apps.get_authenticated requires an
+App-token but preflight runs BEFORE the App-token mint and only holds the
+workflow's GITHUB_TOKEN (RFC §4.6 token-split discipline).
 
 Test surface:
 

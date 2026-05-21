@@ -4,33 +4,30 @@ rocm_mq.config — Self-bootstrap protection path-set + path-to-queues loader.
 Two public surfaces:
 
   1. ``SELF_BOOTSTRAP_PATHS`` — tuple of fnmatch-style glob patterns naming the
-     paths that ``cmd_handle.py`` (plan 03-06) MUST reject ``/merge`` against
-     per RFC §8 self-bootstrap protection. The handler intersects this set
-     with the PR's changed-file list; any intersection triggers an explanatory
-     rejection comment and skips all state mutations (no label apply, no
-     status comment, no eyes reaction).
+     paths the handler MUST reject ``/merge`` against per RFC §8
+     self-bootstrap protection. The handler intersects this set with the PR's
+     changed-file list; any intersection triggers an explanatory rejection
+     comment and skips all state mutations (no label apply, no status
+     comment, no eyes reaction).
 
   2. ``load_from_develop(client, owner, repo)`` — minimal non-validating loader
      for ``.github/merge-queue/path_to_queues.yml`` from the ``develop`` ref via
-     the GitHub Contents API + ``yaml.safe_load``. Schema validation is Phase 4
-     territory (``mq-config-validate.yml`` in plan 04-XX); Phase 3 only needs
-     the dict shape for the handler's path-intersection check and the
-     processor's read-only consumption.
+     the GitHub Contents API + ``yaml.safe_load``. Returns the raw parsed
+     payload; schema validation lives in a separate validator workflow
+     (RFC §4.8).
 
 Plus two trivial env-var-NAME constants (``APP_SLUG_ENV``, ``APP_ID_ENV``)
-that plan 03-06's handler reads from at runtime to pin the merge-queue App's
-identity per RFC §4.3.1 (App-creator filter for the activation status, slug
-pinning for the audit's self-trigger exemption). The slug LITERAL (recommended
-``rocm-mq-fork`` per 03-RESEARCH.md Area #1) is registered manually in plan
-03-05's App-registration task and supplied to the workflow via repo variables
-— it is NOT hardcoded in this module.
+that the handler reads from at runtime to pin the merge-queue App's identity
+per RFC §4.3.1 (App-creator filter for the activation status, slug pinning
+for the audit's self-trigger exemption). The slug literal is registered
+manually during App setup and supplied to the workflow via repo variables —
+it is NOT hardcoded in this module.
 
-Layering (PURE-09): this module is I/O layer (imports ``GitHubClient`` under
-``TYPE_CHECKING`` for type annotation; runtime calls hit the live API via the
-client passed in). It is NOT in ``PURE_LAYER_MODULES`` and freely uses
-``base64``, ``yaml``, and the client's ``.rest.repos.get_content`` method.
-The decision layer never imports from here directly — the handler / processor
-load the dict at entry and pass dict slices into pure-layer functions.
+This module is the I/O layer: it imports ``GitHubClient`` under
+``TYPE_CHECKING`` for typing and freely uses ``base64``, ``yaml``, and the
+client's ``.rest.repos.get_content`` method. The pure decision layer never
+imports from here — the handler and processor load the dict at entry and
+pass slices into pure-layer functions.
 """
 
 from __future__ import annotations
@@ -46,37 +43,26 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Self-bootstrap protection path-set (CLAUDE.md "branch-protection-as-code
-# integration" + RFC §8). Phase 3 handler intersects this with PR changed
-# files; intersection → reject /merge with explanatory comment. Phase 4
-# config-validator further locks this surface.
+# Self-bootstrap protection path-set (RFC §8). The handler intersects this
+# with the PR's changed files; intersection → reject /merge with explanatory
+# comment.
 # ---------------------------------------------------------------------------
 
 SELF_BOOTSTRAP_PATHS: Final[tuple[str, ...]] = (
     ".github/workflows/**",
     ".github/merge-queue/**",
     # Explicit entries even though covered by the ** globs above — keeping
-    # them visible at this layer matches the CONTEXT.md `<code_context>`
-    # Established Patterns enumeration and survives a future refactor that
-    # narrows the ** globs (e.g., to a more specific subtree).
+    # them visible survives a future refactor that narrows the ** globs.
     ".github/merge-queue/path_to_queues.yml",
     ".github/workflows/mq-dogfood-canary.yml",
-    # ---- Future slot: "terraform/github/**" — branch-protection-as-code (RFC §8). ----
-    # When the org adopts an IaC tool to manage branch protection (most likely
-    # the `integrations/github` Terraform provider per CLAUDE.md, possibly the
-    # GitHub Rulesets API, or `.github/settings.yml` via the Settings probot),
-    # add the relevant glob here. The file modifying THIS constant goes through
-    # manual maintainer merge (RFC §8 self-protection on the protection list
-    # itself — `.github/merge-queue/**` already covers this file).
-    #
-    # Document the chosen path in the PR description so future ops know which
-    # IaC tool's surface is now part of the merge-queue's trust boundary.
+    # Add paths here if branch-protection-as-code tooling is adopted
+    # (e.g. terraform/github/**).
 )
 
 
 # ---------------------------------------------------------------------------
-# Env-var NAME constants — consumed by plan 03-06's handler / preflight for
-# App identity pinning. The VALUES (slug literal, numeric app id) live in the
+# Env-var NAME constants — consumed by the handler / preflight for App
+# identity pinning. The VALUES (slug literal, numeric app id) live in the
 # workflow's `${{ vars.MQ_APP_SLUG }}` / `${{ vars.MQ_APP_ID }}` repo
 # variables (or the `mq-secrets` Environment); this module only owns the
 # NAMES so a future rename ripples through one source of truth.
@@ -102,30 +88,25 @@ def load_from_develop(client: GitHubClient, owner: str, repo: str) -> dict[str, 
     via the supplied client, base64-decodes the response body, and parses with
     ``yaml.safe_load``.
 
-    ``safe_load`` (NOT ``load``) is non-negotiable per CLAUDE.md "What NOT to
-    Use" + the plan's T-03-02-01 threat-register mitigation: it blocks
-    ``!!python/object`` and similar code-execution constructs that would let
-    a poisoned ``path_to_queues.yml`` trigger arbitrary Python execution
-    inside the workflow runner (which holds the App installation token).
+    ``safe_load`` (NOT ``load``) is required to block ``!!python/object`` and
+    similar code-execution constructs — a poisoned ``path_to_queues.yml``
+    must not be able to trigger arbitrary Python execution inside the
+    workflow runner, which holds the App installation token.
 
-    No schema validation here — Phase 4's ``mq-config-validate.yml`` job and
-    the RFC §4.8 validator (every queue name appearing in any list also
-    appears as its own path entry; every upstream lists every downstream)
-    own the structural checks. This loader trusts the YAML shape and returns
-    whatever ``safe_load`` produces (typically a ``dict``; could be ``None``
-    or a scalar if the file is malformed — callers handle that).
+    No schema validation here; the RFC §4.8 validator (every queue named in
+    a paths entry also appears in ``queues:``, every upstream lists every
+    downstream) lives in a separate config-validate workflow.
 
     Args:
-        client: A ``GitHubClient`` (or any object exposing ``.rest.repos.get_content``
-            with the same shape). The fake in ``tests/gh_fake.py`` is the
-            unit-test substitute; the real client comes from ``rocm_mq.gh``.
-        owner: Repo owner (e.g., ``"SamuelReeder"``).
-        repo: Repo name (e.g., ``"rocm-libraries"``).
+        client: A ``GitHubClient`` (or any object exposing
+            ``.rest.repos.get_content`` with the same shape).
+        owner: Repo owner.
+        repo: Repo name.
 
     Returns:
         Parsed YAML payload (typically a ``dict[str, Any]`` shaped like the
         RFC §4.8 example). May be ``None`` or a non-dict if the file is
-        malformed; callers in plans 03-04 / 03-06 / 04-XX validate further.
+        malformed; callers validate further.
 
     Raises:
         yaml.YAMLError: If the payload contains tags ``safe_load`` rejects
@@ -145,10 +126,8 @@ def load_from_develop(client: GitHubClient, owner: str, repo: str) -> dict[str, 
 # build_config_from_develop — YAML → MergeQueueConfig bridge
 # ---------------------------------------------------------------------------
 #
-# Shared between cmd_process.run_process_cycle (processor) and
-# cmd_handle._load_config (handler). Extracted here so the two entry points
-# stay in lockstep on the YAML schema interpretation; a future schema change
-# (Phase 4 validator) ripples through one source.
+# Shared between the processor and handler so both stay in lockstep on
+# the YAML schema interpretation.
 
 
 def build_config_from_develop(
@@ -162,19 +141,18 @@ def build_config_from_develop(
       2. Translate the YAML's ``queues:`` list into ``all_queues`` and the
          ``paths:`` list-of-mappings into ``path_to_queues`` (longest-prefix-first
          per ``pathmap.queues_for_paths`` contract).
-      3. ``resolve_app_identity(client)`` (env-var-trust path post-03-wr-01).
+      3. ``resolve_app_identity(client)`` (RFC §4.3.1).
 
     Returns a ``MergeQueueConfig`` ready for ``process_cycle`` / handler
     consumption.
 
     Raises:
         ValueError: If the YAML root is not a mapping (bare list, scalar, None).
-            Schema-graph validation (every queue named in a paths entry must
-            exist in queues:, etc.) is Phase 4 territory.
+            Schema-graph validation lives in the separate config-validate
+            workflow (RFC §4.8).
     """
-    # Late imports to keep config.py's import surface small and to avoid a
-    # PURE-09 violation (state.MergeQueueConfig is in the pure layer; we
-    # construct it here at the I/O boundary).
+    # Late imports to keep config.py's import surface small and to avoid
+    # importing the pure-layer state module at I/O-layer import time.
     from rocm_mq.gh import resolve_app_identity
     from rocm_mq.state import MergeQueueConfig
 

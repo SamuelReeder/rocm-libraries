@@ -1,30 +1,30 @@
-"""rocm_mq.preflight — Workflow startup pre-flight check (WF-10).
+"""rocm_mq.preflight — Pre-flight invariant check for the merge-queue workflows.
 
-Runs as the FIRST step of both ``mq-handler.yml`` (plan 03-07) and
-``mq-processor.yml`` (plan 03-08), BEFORE the App installation token is
-minted. This sequencing is load-bearing: if the fork is misconfigured we
-never want the workflow to even hold the App installation token (RFC §8
-self-bootstrap protection, threat T-03-04-01 in plan 03-04). The check uses
-the workflow's default ``GITHUB_TOKEN`` (read-only, ``contents: read``
-scope) — never the App token.
+Runs before the App installation token is minted so a configuration error
+never touches an active token. Uses GITHUB_TOKEN (read-only) only.
 
-Plan 03-04 Task 1 decision (option-a, comprehensive scope):
+This is the FIRST step of both ``mq-handler.yml`` and ``mq-processor.yml``.
+The sequencing is load-bearing: if the fork is misconfigured we never want
+the workflow to even hold the App installation token (RFC §8 self-bootstrap
+protection). The check uses the workflow's default ``GITHUB_TOKEN``
+(read-only, ``contents: read`` scope) — never the App token.
 
-  Check 1 (WF-10): default branch is ``develop``.
-  Check 2 (App-identity slug-match) — DEFERRED to processor startup per
-      RESEARCH.md Area #23 nuance. ``apps.get_authenticated`` requires an
-      App-token, which preflight does not have. The check surfaces instead
-      as the first processor failure with a clear cause (the processor's
-      existing ``resolve_app_identity`` invocation inside ``process_cycle``
-      raises if the wrong App is installed, satisfying the threat-model
-      coverage passively).
+Checks performed:
+
+  Check 1: default branch is ``develop``.
+  Check 2 (App-identity slug-match) — deferred to processor startup.
+      ``apps.get_authenticated`` requires an App-token, which preflight does
+      not have. The check surfaces instead as the first processor failure
+      with a clear cause (the processor's existing ``resolve_app_identity``
+      invocation inside ``process_cycle`` raises if the wrong App is
+      installed, satisfying the threat-model coverage passively).
   Check 3: ``.github/merge-queue/path_to_queues.yml`` is loadable from the
-      ``develop`` ref via the Contents API. Catches a missing-or-misnamed
-      config file, mis-scoped GITHUB_TOKEN, branch-protection misconfig, or
-      Contents API outage BEFORE the App-token mint.
+      ``develop`` ref via the Contents API (RFC §4.8). Catches a
+      missing-or-misnamed config file, mis-scoped GITHUB_TOKEN,
+      branch-protection misconfig, or Contents API outage BEFORE the
+      App-token mint.
 
-Failure-mode discipline (CONTEXT.md "Pre-flight failure mode is non-zero
-exit + structured stderr + ``$GITHUB_STEP_SUMMARY`` write"):
+Failure-mode discipline:
 
 - Non-zero exit code (1 for check failure; 2 for usage error — mirrors
   ``cmd_process.py`` so the workflow's run-log structure stays uniform).
@@ -33,7 +33,7 @@ exit + structured stderr + ``$GITHUB_STEP_SUMMARY`` write"):
 - Append to ``$GITHUB_STEP_SUMMARY`` (if set) in ``"a"`` mode so a prior
   step's content survives (GHA convention).
 
-Public surface (Phase 3 contract):
+Public surface:
 
 - ``main(argv: list[str] | None = None) -> int`` — entry point; argv parses
   via ``_parse_args`` (``--repo OWNER/REPO`` only). Returns:
@@ -141,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
 
     Validation pattern mirrors ``cmd_process.run_process_cycle`` lines
     321-349 so the exit-code-2 convention is uniform across rocm_mq CLI
-    entrypoints — Phase 3 workflow tests rely on the distinction between
+    entrypoints — workflow tests rely on the distinction between
     exit-1 (check failed) and exit-2 (operator misconfigured the invocation).
     """
     args = _parse_args(argv)
@@ -176,12 +176,12 @@ def main(argv: list[str] | None = None) -> int:
 
     client = GitHubClient(token=token)
 
-    # Check 1 (WF-10): default branch is develop.
+    # Check 1: default branch is develop.
     #
-    # Threat-model tie-in (T-03-04-01): the fork being on the wrong default
-    # branch means the queue would serialize merges into the wrong place —
-    # we MUST short-circuit before the App-token is even minted so a
-    # misconfigured fork never holds the installation token.
+    # The fork being on the wrong default branch means the queue would
+    # serialize merges into the wrong place — we MUST short-circuit before
+    # the App-token is even minted so a misconfigured fork never holds the
+    # installation token.
     repo_resp = client.rest.repos.get(owner, repo)
     actual_default = repo_resp.parsed_data.default_branch
     if actual_default != _EXPECTED_DEFAULT_BRANCH:

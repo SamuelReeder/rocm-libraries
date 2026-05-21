@@ -1,20 +1,19 @@
 """
-rocm_mq.cmd_process — CLI entrypoint for the merge-queue processor cycle.
+rocm_mq.cmd_process — Process-cycle orchestrator and CLI entrypoint.
 
-Orchestrates the full RFC §4.9 read → derive → decide → execute loop:
+Orchestrates the full RFC §4.6 read → derive → decide → execute loop:
 
     build_snapshot  →  derive_snapshot  →  decide_cycle  →  dispatch
         (I/O)           (pure)            (pure)          (I/O)
 
-This module is the GLUE layer between Phase 2's I/O adapters
-(``snapshot.py``, ``executor.py``, ``gh.py``) and Phase 1's pure decision
-layer. It is the ONLY module in ``rocm_mq`` that calls
-``datetime.now(tz=UTC)`` at cycle scope (PATTERNS.md "now threading" rule):
-the single ``now`` value is computed in ``main()`` and threaded through to
-``derive_snapshot`` and ``decide_cycle`` so all per-cycle timestamps are
-consistent and deterministic in tests.
+This module is the glue layer between the I/O adapters (``snapshot.py``,
+``executor.py``, ``gh.py``) and the pure decision layer. It is the ONLY
+module in ``rocm_mq`` that calls ``datetime.now(tz=UTC)`` at cycle scope
+(PATTERNS.md "now threading" rule): the single ``now`` value is computed in
+``main()`` and threaded through to ``derive_snapshot`` and ``decide_cycle``
+so all per-cycle timestamps are consistent and deterministic in tests.
 
-Public surface (Phase 2 contract):
+Public surface:
 - ``main() -> int`` — argparse + token resolution + client construction +
   process_cycle invocation. Returns 0 on success, non-zero on any failure
   outcome (including ``CorruptSquashError`` surfaced via _handle_squash).
@@ -38,23 +37,21 @@ behind the ``--fake`` flag so production code paths never reference test
 artefacts.
 
 The ``--dry-run`` flag emits the would-be ``Action`` list to stdout and
-returns without calling ``dispatch``. This is Phase 3 forward-compatibility
-(WF-07; ROADMAP Phase 3 success criterion 6).
+returns without calling ``dispatch``.
 
 PURE-09 compliance: this module imports ``rocm_mq.snapshot`` /
 ``rocm_mq.executor`` (both I/O modules) and ``rocm_mq.decision`` /
 ``rocm_mq.summary`` (both pure). It is intentionally a glue layer; the
 PURE-09 lint excludes it from the pure-layer set.
 
-Phase 3 argparse refactor (plan 03-01):
-``_parse_args`` now uses ``add_subparsers(dest="subcommand", required=True)``
+``_parse_args`` uses ``add_subparsers(dest="subcommand", required=True)``
 with four subparsers (``process-cycle``, ``handle``, ``audit``,
 ``preflight``); each registers a per-subcommand ``set_defaults(func=run_*)``
 callable so ``main()`` reduces to ``args.func(args)`` wrapped in the
 existing traceback-printing try/except. ``handle`` dispatches into
-``rocm_mq.cmd_handle.main`` (wired by plan 03-06). ``preflight`` dispatches
-into ``rocm_mq.preflight.main`` (wired by plan 03-04). ``audit`` is a
-Phase 3 no-op (the RFC §4.3.1 tamper-matrix logic lands in Phase 4).
+``rocm_mq.cmd_handle.main``. ``preflight`` dispatches into
+``rocm_mq.preflight.main``. ``audit`` is a stub pending RFC §4.3.1
+tamper-matrix implementation.
 """
 
 from __future__ import annotations
@@ -174,7 +171,7 @@ def process_cycle(
         )
         outcomes.append(outcome)
 
-    # Step 6: render summary + write to $GITHUB_STEP_SUMMARY.
+    # Step 6: render summary + write to two sinks.
     cycle_completed_at = datetime.now(tz=UTC)
     queue_depths = _compute_queue_depths(snapshot, config)
     render_ctx = CycleRenderContext(
@@ -194,12 +191,12 @@ def process_cycle(
             if not summary.endswith("\n"):
                 fh.write("\n")
 
-    # Second sink: cycle-summary.md file (RESEARCH.md Area #11). Plan
-    # 03-08 exposes this file as an actions/upload-artifact upload so the
-    # Wave-4 dogfood drivers can download a structured copy of the cycle
-    # summary via the GitHub artifacts API (raw run-logs zip is not
-    # cleanly parseable). Unlike $GITHUB_STEP_SUMMARY (appended), this
-    # path is OVERWRITTEN per cycle — each cycle's summary stands alone.
+    # Second sink: cycle-summary.md file. This file is exposed as an
+    # actions/upload-artifact upload so dogfood drivers can download a
+    # structured copy of the cycle summary via the GitHub artifacts API
+    # (raw run-logs zip is not cleanly parseable). Unlike
+    # $GITHUB_STEP_SUMMARY (appended), this path is OVERWRITTEN per cycle
+    # — each cycle's summary stands alone.
     # Default path matches the upload-artifact step's `path:` input in
     # .github/workflows/mq-processor.yml.
     cycle_summary_path = os.environ.get(
@@ -264,7 +261,7 @@ def _build_fake_client() -> Any:
     ["src/rocm_mq"]``) ships only the package source — running ``--fake``
     against a wheel-installed copy produces a ``ModuleNotFoundError``.
     Catch that and emit an actionable message rather than a bare stack
-    trace (WR-07).
+    trace (preserves module:line attribution in tracebacks).
     """
     # Conditional import — only happens when --fake is set.
     try:
@@ -291,23 +288,25 @@ def _build_fake_client() -> Any:
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Build the argparse Namespace using a subparser tree.
 
-    Phase 3 (plan 03-01) shape — ``add_subparsers(dest="subcommand",
-    required=True)`` with four registered subcommands, each carrying its
-    own isolated flag namespace and a ``set_defaults(func=...)`` that
-    ``main()`` invokes as ``args.func(args)``.
+    Uses ``add_subparsers(dest="subcommand", required=True)`` with four
+    registered subcommands, each carrying its own isolated flag namespace
+    and a ``set_defaults(func=...)`` that ``main()`` invokes as
+    ``args.func(args)``.
 
     Subcommands:
-      - ``process-cycle`` (Phase 2, unchanged behaviour): ``--fake``,
-        ``--dry-run``, ``--repo OWNER/REPO``.
-      - ``handle`` (plan 03-06 stub): ``--repo OWNER/REPO``,
+      - ``process-cycle``: run one processor cycle (RFC §4.6). Flags:
+        ``--fake``, ``--dry-run``, ``--repo OWNER/REPO``.
+      - ``handle``: dispatch a /merge or /dequeue issue_comment event.
+        Flags: ``--repo OWNER/REPO``,
         ``--event-path PATH`` (defaults to ``$GITHUB_EVENT_PATH``).
-      - ``audit`` (Phase 3 no-op stub; Phase 4 fills in RFC §4.3.1
-        tamper-matrix logic): no flags.
-      - ``preflight`` (plan 03-04 stub): ``--repo OWNER/REPO``.
+      - ``audit``: RFC §4.3.1 tamper-matrix audit (not yet implemented).
+        No flags.
+      - ``preflight``: workflow pre-flight invariant check. Flags:
+        ``--repo OWNER/REPO``.
 
-    Backward-compat (RESEARCH.md Area #20): existing internal test calls
-    of the form ``main(["process-cycle", ...])`` continue to work because
-    ``process-cycle`` becomes a subparser of the same literal name. The
+    Backward-compat note: existing internal test calls of the form
+    ``main(["process-cycle", ...])`` continue to work because
+    ``process-cycle`` is a subparser of the same literal name. The
     ``mq-test.yml`` workflow does not invoke ``cmd_process`` directly
     (runs ``pytest``), so no external CI consumer breaks.
     """
@@ -322,7 +321,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
-    # process-cycle — the Phase 2 orchestrator, unchanged in behaviour.
+    # process-cycle — the processor cycle orchestrator (RFC §4.6).
     p_cycle = sub.add_parser(
         "process-cycle",
         help="Run one merge-queue processor cycle (RFC §4.6).",
@@ -340,7 +339,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help=(
             "Emit the would-be Action list to stdout and exit without "
-            "calling dispatch (WF-07)."
+            "calling dispatch."
         ),
     )
     p_cycle.add_argument(
@@ -353,12 +352,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p_cycle.set_defaults(func=run_process_cycle)
 
-    # handle — Phase 3 plan-03-06 stub; the real cmd_handle module is wired
-    # by that plan. This subparser exists now so mq-handler.yml can be
-    # authored against a stable CLI surface ahead of the implementation.
+    # handle — dispatches into rocm_mq.cmd_handle.
     p_handle = sub.add_parser(
         "handle",
-        help="Handle a /merge or /dequeue issue_comment event (plan 03-06).",
+        help="Handle a /merge or /dequeue issue_comment event.",
     )
     p_handle.add_argument(
         "--repo",
@@ -375,21 +372,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p_handle.set_defaults(func=run_handle)
 
-    # audit — Phase 3 no-op stub. The full RFC §4.3.1 tamper-matrix logic
-    # lands in Phase 4 (cmd_audit.py); the subparser exists now so
-    # mq-handler.yml can declare the audit job against a stable surface.
+    # audit — RFC §4.3.1 tamper-matrix audit (not yet implemented).
     p_audit = sub.add_parser(
         "audit",
-        help="Phase 3 no-op audit stub (Phase 4 implements RFC §4.3.1).",
+        help="RFC §4.3.1 tamper-matrix audit (not yet implemented).",
     )
     p_audit.set_defaults(func=run_audit)
 
-    # preflight — Phase 3 plan-03-04 stub. Wires the workflow pre-flight
-    # check (default-branch invariant, PATH_TO_QUEUES loadability, etc.)
-    # in that plan.
+    # preflight — dispatches into rocm_mq.preflight.
     p_preflight = sub.add_parser(
         "preflight",
-        help="Workflow pre-flight invariant check (plan 03-04).",
+        help="Workflow pre-flight invariant check.",
     )
     p_preflight.add_argument(
         "--repo",
@@ -407,16 +400,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def run_process_cycle(args: argparse.Namespace) -> int:
-    """Run the Phase 2 processor cycle end-to-end.
+    """Run the processor cycle end-to-end.
 
-    Construction order (unchanged from the pre-refactor ``main()`` body):
+    Construction order:
       1. Validate ``--repo`` parses as ``owner/repo``.
       2. Build client (FakeGitHub if --fake, else GitHubClient(GITHUB_TOKEN)).
       3. Resolve the App's canonical identity via ``resolve_app_identity``
-         (CR-01: sentinel zeros would silently reject every legitimate
+         (sentinel zeros would silently reject every legitimate
          status/timeline event).
-      4. Build the default MergeQueueConfig (Phase 4 will load
-         PATH_TO_QUEUES yaml).
+      4. Build the MergeQueueConfig (from PATH_TO_QUEUES yaml in real-token
+         mode; from a hardcoded default in --fake mode).
       5. Compute ``now = datetime.now(tz=UTC)`` — the ONLY datetime.now()
          call at cycle scope in the codebase.
       6. Call ``process_cycle(...)``.
@@ -464,19 +457,17 @@ def run_process_cycle(args: argparse.Namespace) -> int:
     # Build the config.
     #
     # --fake mode: hardcoded canonical config (`hipdnn` only), matching the
-    # shape Phase 2 tests use. resolve_app_identity is called via the
-    # FakeGitHub's stubbed apps/users namespaces.
+    # shape tests use. resolve_app_identity is called via the FakeGitHub's
+    # stubbed apps/users namespaces.
     #
     # Real-token mode: load path_to_queues.yml from develop via the Contents
-    # API and translate to MergeQueueConfig with all opted-in queues. This
-    # ships the Phase 4 YAML loader integration (03-wr-02 follow-up) — the
-    # processor now sees every queue the YAML lists, not just hipdnn.
-    # resolve_app_identity is called inside build_config_from_develop and
-    # takes the env-var-trust path (post-03-wr-01).
+    # API and translate to MergeQueueConfig with all opted-in queues. The
+    # processor sees every queue the YAML lists. resolve_app_identity is
+    # called inside build_config_from_develop.
     #
     # Schema-graph validation (every queue named in a path entry must exist
-    # in queues:, upstream/downstream closure) remains Phase 4 territory
-    # (mq-config-validate.yml); this loader is non-validating beyond the
+    # in queues:, upstream/downstream closure) is handled by
+    # mq-config-validate.yml; this loader is non-validating beyond the
     # "root is a mapping" sanity check.
     config: MergeQueueConfig
     if args.fake:
@@ -503,7 +494,7 @@ def run_process_cycle(args: argparse.Namespace) -> int:
 
     # Exit non-zero if any outcome failed. CorruptSquashError already arrives
     # as ActionOutcome(success=False, error_message="<exc>") from
-    # _handle_squash, so this captures the Pitfall 8 alert path.
+    # _handle_squash (catches the Eject case from _handle_squash).
     failures = [o for o in outcomes if not o.success]
     if failures:
         print(
@@ -523,10 +514,8 @@ def run_process_cycle(args: argparse.Namespace) -> int:
 def run_handle(args: argparse.Namespace) -> int:
     """Dispatch the ``handle`` subcommand into ``rocm_mq.cmd_handle.main``.
 
-    Plan 03-06 wired this through — the prior NotImplementedError stub
-    from plan 03-01 is replaced by a real delegation that re-serializes
-    the parsed ``--repo`` / ``--event-path`` flags so ``cmd_handle.main``
-    re-parses them. Re-parsing keeps both entrypoints
+    Re-serializes the parsed ``--repo`` / ``--event-path`` flags so
+    ``cmd_handle.main`` re-parses them. Re-parsing keeps both entrypoints
     (``python -m rocm_mq handle ...`` and a direct
     ``python -m rocm_mq.cmd_handle ...`` invocation if one is ever added)
     independently usable with the same flag surface — mirrors the pattern
@@ -550,23 +539,23 @@ def run_handle(args: argparse.Namespace) -> int:
 
 
 def run_audit(args: argparse.Namespace) -> int:
-    """Phase 3 no-op stub — Phase 4 fills in RFC §4.3.1 tamper-matrix logic.
+    """RFC §4.3.1 tamper-matrix audit (not yet implemented).
 
     Returns 0 cleanly so mq-handler.yml's audit job slot can be authored
-    and exercised end-to-end ahead of the Phase 4 implementation, but
-    prints a structured stderr note so operators reading the workflow
-    run log do not mistake the no-op for "audit logic ran".
+    and exercised end-to-end ahead of the implementation, but prints a
+    structured stderr note so operators reading the workflow run log do not
+    mistake the no-op for "audit logic ran".
     """
     print(
-        "audit: Phase 3 no-op stub; Phase 4 implements RFC §4.3.1 logic "
-        "(label tamper, status tamper, comment tamper).",
+        "audit: not yet implemented; RFC §4.3.1 tamper-matrix logic "
+        "(label tamper, status tamper, comment tamper) pending.",
         file=sys.stderr,
     )
     return 0
 
 
 def run_preflight(args: argparse.Namespace) -> int:
-    """Dispatch into ``rocm_mq.preflight.main`` (wired by plan 03-04).
+    """Dispatch into ``rocm_mq.preflight.main``.
 
     Re-serializes the parsed ``--repo`` flag and hands off to
     ``preflight.main``. The pre-flight CLI re-parses argv so the two
@@ -594,17 +583,15 @@ def run_preflight(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint — parses argv and dispatches to the registered subcommand.
 
-    After the Phase 3 plan-01 argparse refactor, ``main`` reduces to:
+    Reduces to:
 
         args = _parse_args(argv)
         return args.func(args)
 
     wrapped in a shared try/except that prints repr + traceback to stderr
     on any uncaught exception. This unifies the failure mode across all
-    four subparser handlers — ``NotImplementedError`` from the
-    ``run_handle`` / ``run_preflight`` stubs surfaces with the same
-    structured stderr the Phase 2 ``process_cycle`` orchestrator-catch
-    pattern used (WR-04).
+    four subparser handlers — any unhandled exception surfaces with
+    structured stderr including module:line attribution in the traceback.
 
     Errors raised by argparse (e.g., ``--help``, missing required
     subcommand) propagate as ``SystemExit``; the caller handles them.
@@ -615,32 +602,27 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.func(args))
     except Exception as exc:
         # Preserve the traceback — operators debugging a production
-        # failure need module:line attribution, not just repr(exc) (WR-04).
-        # NotImplementedError from the run_handle / run_preflight stubs
-        # also flows through here (T-03-01-02 mitigation: loud failure,
-        # not silent zero).
+        # failure need module:line attribution, not just repr(exc).
         print(f"error: {type(exc).__name__}: {exc!r}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         return 1
 
 
 def _build_default_config(*, app_identity: AppIdentity) -> MergeQueueConfig:
-    """Default MergeQueueConfig for Phase 2 CLI runs.
+    """Build the hardcoded default MergeQueueConfig used in --fake mode.
 
-    Phase 4 (PATH_TO_QUEUES loader) will replace this with a yaml-driven
-    factory. For Phase 2 we use the canonical config so --fake runs
-    end-to-end against the same shape the tests exercise.
-
-    Note: in Phase 2 tests we import ``canonical_merge_queue_config`` from
-    ``tests.conftest`` and pass it directly to ``process_cycle`` — this
-    factory is only used by the ``main()`` real-token path.
+    Uses the canonical single-queue config (``hipdnn`` only) so --fake
+    runs end-to-end against the same shape the tests exercise. In tests,
+    ``canonical_merge_queue_config`` from ``tests.conftest`` is passed
+    directly to ``process_cycle``; this factory is only used by the
+    --fake CLI path.
 
     Args:
         app_identity: The App's resolved canonical identity (slug + app_id +
             bot_user_id), produced by ``resolve_app_identity(client)`` at
             cycle startup. Sentinel zeros would reject every legitimate
-            status/timeline event in the decision layer (CR-01); the field
-            is keyword-only and required to make accidental zero-stubs a
+            status/timeline event in the decision layer; the field is
+            keyword-only and required to make accidental zero-stubs a
             type error rather than a silent production no-op.
     """
     return MergeQueueConfig(

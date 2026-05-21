@@ -1,16 +1,17 @@
-"""
-test_invariant_no_squash_without_app_activation.py — RFC §6 invariant 4:
-No squash without App-created activation.
+"""RFC §6 invariant: no squash without App-created activation.
 
 Two sub-invariants:
 1. For every Squash(pr), pr.is_validly_active is True (derived PRState check).
 2. Stronger: the underlying raw_pr had a merge-queue/active status from the
    canonical App identity (raw canonical activation check).
 
-Uses RuleBasedStateMachine + shadow-state pattern (Pitfall 11).
-@invariant reads only self.shadow_* — never self.prs (the Bundle).
+Uses RuleBasedStateMachine + shadow-state pattern. @invariant methods read
+only self.shadow_* — never self.prs (the Hypothesis Bundle) — because
+Bundle reads inside @invariant are not safe under Hypothesis's shrinker.
 
-The state machine class is named NoSquashWithoutActivationMachine (no Test prefix).
+The state machine class is named NoSquashWithoutActivationMachine (no Test
+prefix) so pytest does not try to collect it directly; discovery happens via
+TestNoSquashWithoutAppActivation_TestCase below.
 """
 
 from __future__ import annotations
@@ -35,8 +36,9 @@ class NoSquashWithoutActivationMachine(MergeQueueStateMachineBase):
     def squash_requires_validly_active(self) -> None:
         """For every Squash in last_cycle_actions, pr.is_validly_active must be True.
 
-        is_validly_active=True means derive_pr found a merge-queue/active commit
-        status with BOTH the right context AND the canonical App creator (D-02).
+        is_validly_active=True means derive_pr found a merge-queue/active
+        commit status with BOTH the right context AND the canonical App
+        creator (the activation-status creator filter, RFC §4.3.1).
 
         Reads last_cycle_actions — never self.prs.
         """
@@ -55,7 +57,7 @@ class NoSquashWithoutActivationMachine(MergeQueueStateMachineBase):
 
         This catches cases where is_validly_active might be incorrectly True
         but the raw activation is actually forged. Uses _raw_had_canonical_activation
-        helper which reads shadow_raw_prs (shadow state only — Pitfall 11 safe).
+        helper which reads shadow_raw_prs (shadow state only — safe (shadow state only)).
 
         Note: During the @invariant check, the PR is still in shadow_raw_prs
         (removal happens after the invariant check completes via Hypothesis's

@@ -1,14 +1,15 @@
-"""Tests for rocm_mq.cmd_handle — Phase 3 plan 03-06 command-handler module.
+"""Tests for rocm_mq.cmd_handle — /merge and /dequeue command handler
+(RFC §4.3 / §4.4 / §4.5).
 
-Coverage map (see PLAN.md Task 2 + Task 3 behavior blocks):
-  - parse_commands edge cases (Area #6 behavior matrix)
-  - is_self_bootstrap glob hits / misses (Area #16)
+Coverage:
+  - parse_commands edge cases (command grammar)
+  - is_self_bootstrap glob hits / misses (RFC §8 self-bootstrap rejection)
   - _check_perm: admin/maintain/write pass; read/none fail; PR-author override
   - _check_at_enqueue_gates: pass / fail-on-no-approval / fail-on-required-check /
     fail-on-maintainer-edits / fail-on-empty-queue-set
   - Idempotency short-circuit (mq:queued / mq:active present → eyes-only)
   - Self-bootstrap rejection (rejection comment posted, no labels)
-  - DOG-08 path (no opted-in path → rejection comment)
+  - Unmapped-paths rejection (PR touches no opted-in queue path)
   - Successful enqueue happy path (single-queue + multi-queue)
   - main() error paths (missing GITHUB_TOKEN, missing event-path file)
 """
@@ -141,7 +142,7 @@ def _seed_pr(
 
 
 # ---------------------------------------------------------------------------
-# parse_commands edge cases (Area #6 behavior matrix)
+# parse_commands edge cases (command grammar)
 # ---------------------------------------------------------------------------
 
 
@@ -179,7 +180,7 @@ class TestParseCommands:
 
 
 # ---------------------------------------------------------------------------
-# is_self_bootstrap (Area #16)
+# is_self_bootstrap (RFC §8 self-bootstrap rejection)
 # ---------------------------------------------------------------------------
 
 
@@ -285,7 +286,7 @@ class TestCheckPerm:
 
 
 # ---------------------------------------------------------------------------
-# _check_at_enqueue_gates (RFC §4.3 / WF-02)
+# _check_at_enqueue_gates (RFC §4.3)
 # ---------------------------------------------------------------------------
 
 
@@ -359,9 +360,9 @@ class TestAtEnqueueGates:
         self, fake_client: FakeGitHub, fake_state: FakeRepoState
     ) -> None:
         # is_cross_repo=True is required to trigger the maintainer-edits
-        # gate (03-wr-08): the field is only meaningful when head/base
-        # live in different repos. Same-repo PRs return False by default
-        # on GitHub but the field has no real meaning there.
+        # gate: the field is only meaningful when head/base live in
+        # different repos. Same-repo PRs return False by default on
+        # GitHub but the field has no real meaning there.
         _seed_pr(fake_state, maintainer_can_modify=False, is_cross_repo=True)
         pr = fake_client.rest.pulls.get("o", "r", 7).parsed_data
         fails = cmd_handle._check_at_enqueue_gates(
@@ -557,7 +558,7 @@ class TestMainSelfBootstrapRejection:
         assert any("path_to_queues.yml" in body for body in bodies)
 
 
-class TestMainDog08UnmappedPath:
+class TestMainUnmappedPath:
     def test_pr_touches_only_unmapped_path_rejected(
         self,
         tmp_path: Path,
@@ -581,14 +582,14 @@ class TestMainDog08UnmappedPath:
 
 
 # ---------------------------------------------------------------------------
-# WF-12: eyes-reaction posted on EVERY received /merge — including rejections
-# (live DOG-04 run 2026-05-20 surfaced this gap; commit 03-wr-05 closes)
+# Eyes-reaction posted on EVERY received /merge — including rejections.
+# Eyes is posted before any state mutation so re-delivery is idempotent.
 # ---------------------------------------------------------------------------
 
 
-class TestWf12EyesOnEveryMerge:
-    """WF-12: handler posts eyes reaction on every received /merge, regardless
-    of accept/reject outcome. RFC §4.3 wording — eyes is an ack the handler
+class TestEyesOnEveryMerge:
+    """Handler posts eyes reaction on every received /merge, regardless of
+    accept/reject outcome. RFC §4.3 wording — eyes is an ack the handler
     saw the comment, not a 'we'll proceed' signal."""
 
     def test_eyes_posted_on_self_bootstrap_rejection(
@@ -676,7 +677,7 @@ class TestWf12EyesOnEveryMerge:
         )
         comments = fake_state.comments_store.get(7, {})
         bodies = list(comments.values())
-        # DOG-08 rejection cites no opted-in queue
+        # rejection cites no opted-in queue
         assert any(
             "opted-in" in b.lower() or "no queue" in b.lower() or "queue" in b.lower()
             for b in bodies
@@ -923,7 +924,7 @@ class TestMainErrors:
 
 
 def test_cmd_handle_module_importable() -> None:
-    """Public surface exists per plan 03-06 interfaces."""
+    """Public surface exists: main, parse_commands, is_self_bootstrap."""
     assert callable(cmd_handle.main)
     assert callable(cmd_handle.parse_commands)
     assert callable(cmd_handle.is_self_bootstrap)

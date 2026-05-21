@@ -1,13 +1,13 @@
-"""
-tests/test_derive.py — Unit tests for derive_pr (three-case logic) and
-derive_snapshot, plus the is_validly_active adversarial matrix.
+"""Unit tests for derive_pr (three-case logic) and derive_snapshot, plus
+the is_validly_active adversarial matrix.
 
-Coverage (per PLAN.md Task 2):
-- Case 1 (normal): App-applied mq:queued event → PRState
-- Case 2 (timeline lag): label present but no event → DeferredPR
-- Case 3 (tampered): non-App-applied event only → DeferredPR
-- is_validly_active matrix: 7 parametrized variants
-- Property: adversarial creators yield is_validly_active=False
+Coverage:
+- Normal case: App-applied mq:queued event → PRState
+- Timeline-lag case: label present but no event → DeferredPR
+- Tampered case: only non-App-applied events → DeferredPR
+- is_validly_active matrix: 7 parametrized variants exercising the
+  creator-filter + context-filter logic
+- Property: adversarial creators always yield is_validly_active=False
 - derive_snapshot: collects PRState + emits Defer for DeferredPR
 """
 
@@ -108,12 +108,12 @@ def _canonical_status(config: MergeQueueConfig = _CONFIG) -> CommitStatus:
 
 
 # ---------------------------------------------------------------------------
-# Case 1: Normal — App-applied mq:queued event present
+# Normal case — App-applied mq:queued event present
 # ---------------------------------------------------------------------------
 
 
 def test_derive_pr__case1_normal_returns_pr_state() -> None:
-    """Case 1: App-applied mq:queued event → returns PRState with correct fields."""
+    """Normal: App-applied mq:queued event → returns PRState with correct fields."""
     from datetime import datetime
 
     enqueue_time = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
@@ -138,7 +138,7 @@ def test_derive_pr__case1_normal_returns_pr_state() -> None:
 
 
 def test_derive_pr__case1_enqueued_at_uses_most_recent_app_event() -> None:
-    """Case 1: enqueued_at = max(app events) — re-enqueue moves to back of queue."""
+    """Normal: enqueued_at = max(app events) — re-enqueue moves to back of queue."""
     from datetime import datetime
 
     t1 = datetime(2026, 1, 1, 9, 0, tzinfo=UTC)
@@ -160,7 +160,7 @@ def test_derive_pr__case1_enqueued_at_uses_most_recent_app_event() -> None:
 
 
 def test_derive_pr__case1_queues_excludes_state_labels() -> None:
-    """Case 1: queues strips mq:queued and mq:active from label set."""
+    """Normal: queues strips mq:queued and mq:active from label set."""
     from datetime import datetime
 
     t = datetime(2026, 1, 1, tzinfo=UTC)
@@ -178,12 +178,12 @@ def test_derive_pr__case1_queues_excludes_state_labels() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Case 2: Timeline lag — label present but no App-applied event
+# Timeline-lag case — label present but no App-applied event yet visible
 # ---------------------------------------------------------------------------
 
 
 def test_derive_pr__case2_label_without_event_returns_deferred() -> None:
-    """Case 2: mq:queued label present but mq_queued_label_events=() → DeferredPR."""
+    """Timeline lag: mq:queued label present but mq_queued_label_events=() → DeferredPR."""
     from datetime import datetime
 
     t = datetime(2026, 1, 1, tzinfo=UTC)
@@ -202,7 +202,7 @@ def test_derive_pr__case2_label_without_event_returns_deferred() -> None:
 
 
 def test_derive_pr__case2_deferred_reason_is_descriptive() -> None:
-    """Case 2: DeferredPR reason string gives enough info for debugging."""
+    """Timeline lag: DeferredPR reason string gives enough info for debugging."""
     from datetime import datetime
 
     t = datetime(2026, 1, 1, tzinfo=UTC)
@@ -221,12 +221,12 @@ def test_derive_pr__case2_deferred_reason_is_descriptive() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Case 3: Tampered — only non-App-applied events
+# Tampered case — only non-App-applied events
 # ---------------------------------------------------------------------------
 
 
 def test_derive_pr__case3_non_app_event_only_returns_deferred() -> None:
-    """Case 3: Only non-App mq:queued events → DeferredPR with 'non-App actor' reason."""
+    """Tampered: only non-App mq:queued events → DeferredPR with 'non-App actor' reason."""
     from datetime import datetime
 
     t = datetime(2026, 1, 1, tzinfo=UTC)
@@ -247,7 +247,7 @@ def test_derive_pr__case3_non_app_event_only_returns_deferred() -> None:
 
 
 def test_derive_pr__case3_non_app_event_even_with_label_is_deferred() -> None:
-    """Case 3 precedence: non-App event is caught even when the label is present."""
+    """Tampered precedence: non-App event is caught even when the label is present."""
     from datetime import datetime
 
     t = datetime(2026, 1, 1, tzinfo=UTC)
@@ -266,7 +266,7 @@ def test_derive_pr__case3_non_app_event_even_with_label_is_deferred() -> None:
 
 
 def test_derive_pr__no_enqueue_evidence_returns_deferred() -> None:
-    """Case 'no evidence': no label AND no events → DeferredPR."""
+    """No enqueue evidence: no label AND no events → DeferredPR."""
     from datetime import datetime
 
     t = datetime(2026, 1, 1, tzinfo=UTC)

@@ -1,5 +1,5 @@
-"""
-tests/test_executor.py — Unit tests for rocm_mq.executor (IO-03, IO-04, IO-05).
+"""Tests for the action dispatcher (executor.py): activation state machine
+(RFC §4.9), squash idempotency, and corrupt-squash detection.
 
 Covers:
 - ``dispatch(action, client, config, owner, repo)`` — exhaustive match over the
@@ -10,13 +10,13 @@ Covers:
   (conflict, return failure) → pre-stamp race check (re-read PR head SHA;
   abort if changed) → stamp ``merge-queue/active`` commit status → label flip
   (add ``mq:active``, safely remove ``mq:queued``).
-- Per-handler idempotency (RFC §4.6 stateless-processor contract; UK-3
-  second-call scenarios): repos.merge 204, status overwrite, add_labels dedup,
-  remove_label 404 swallowed, pulls.merge 405 swallowed.
-- ``_verify_squash`` — IO-05 / Pitfall 8 defence (April 2026 silent corruption
-  incident). Asserts the squash commit's ``parents[0].sha`` equals the
-  ``develop`` branch tip recorded *before* the squash; retries 3x on 404 to
-  absorb read-replication lag (RESEARCH.md UK-4).
+- Per-handler idempotency (RFC §4.6 stateless-processor contract; repeated
+  invocations must converge): repos.merge 204, status overwrite, add_labels
+  dedup, remove_label 404 swallowed, pulls.merge 405 swallowed.
+- ``_verify_squash`` — defence against the Apr-2026 silent-corruption pattern
+  (squash commit that does not actually advance develop). Asserts the squash
+  commit's ``parents[0].sha`` equals the ``develop`` branch tip recorded
+  *before* the squash; retries 3x on 404 to absorb read-replication lag.
 - ``_find_status_comment_id`` — lazy ``<!-- rocm-mq-status -->`` marker
   discovery on PR issue comments.
 
@@ -297,7 +297,7 @@ def test_dispatch__defer__returns_success_without_api_call() -> None:
     assert outcome.error_message is None
     # No API call of any kind was made — client.rest must not have been touched.
     assert not client.rest.method_calls
-    # Same for PartialPRState (Q4 resolution): Defer can carry either shape.
+    # Same for PartialPRState: Defer can carry either shape.
     partial = PartialPRState(number=99, head_sha="z", labels=frozenset())
     defer_partial = Defer(pr=partial, reason="derive failed")
     outcome2 = executor.dispatch(
@@ -377,10 +377,9 @@ def test_activate__repos_merge_204__uses_current_head_sha() -> None:
 def test_activate__repos_merge_409__ejects_with_documented_reason() -> None:
     """409 conflict on develop→PR merge → eject with 'merge conflict with develop'.
 
-    RFC §6 DOG-02 documents this exact reason; the eject path stamps a
-    failure activation status, clears any mq:* labels (none in this fixture),
-    and posts a status comment naming the reason so the dogfood driver's
-    polling predicate can match.
+    The eject path stamps a failure activation status, clears any mq:*
+    labels (none in this fixture), and posts a status comment naming the
+    documented reason so external observers can match on it.
     """
     from rocm_mq import executor
     from rocm_mq.state import Eject
@@ -458,13 +457,13 @@ def test_activate__pre_stamp_race__author_pushed_between_merge_and_stamp() -> No
 
 
 def test_activate__label_add_failure__no_status_stamped(monkeypatch: pytest.MonkeyPatch) -> None:
-    """add_labels raising must NOT leave the activation status stamped (CR-03).
+    """regression guard: a failed stamp must leave the PR re-activatable next cycle.
 
-    Regression guard for the split-brain bug: with the previous stamp-then-flip
-    order, a label-flip failure left the App's success status posted on the
-    merged SHA while the labels still said queued. The decision layer's
-    is_validly_active check binds activation to that status (RFC §4.9), so the
-    next cycle could schedule a Squash while humans saw mq:queued unchanged.
+    With the previous stamp-then-flip order, a label-flip failure left the App's
+    success status posted on the merged SHA while the labels still said queued.
+    The decision layer's is_validly_active check binds activation to that
+    status (RFC §4.9), so the next cycle could schedule a Squash while humans
+    saw mq:queued unchanged — split-brain.
 
     Fix: the handler now flips labels FIRST and stamps LAST, so any
     add_labels failure aborts before any status is posted. The next cycle
@@ -497,12 +496,12 @@ def test_activate__label_add_failure__no_status_stamped(monkeypatch: pytest.Monk
     # status_store with the merged SHA + activation context BEFORE the
     # add_labels failure propagated.
     assert not fake.state.status_store, (
-        "regression: activation status was stamped despite add_labels failure (CR-03)"
+        "regression: activation status was stamped despite add_labels failure"
     )
 
 
 def test_activate__pre_stamp_race__204_path__author_pushed_between_reads() -> None:
-    """204 path: race check must trip when head advances between the two reads (CR-02).
+    """regression guard: stamp must follow label flip (race check on 204 path).
 
     On the 204 ("already up-to-date") path the handler calls pulls.get twice:
     once to capture the post-merge head SHA (used as the SHA to stamp), and
@@ -562,7 +561,11 @@ def test_activate__pre_stamp_race__204_path__author_pushed_between_reads() -> No
 
 
 def test_activate__second_call__noop_on_already_active_pr() -> None:
-    """Second activate on an already-active PR completes without error (UK-3)."""
+    """Second activate on an already-active PR completes without error.
+
+    Idempotency contract: re-running Activate against a PR that is already
+    active must be a no-op (no duplicate labels, no extra status post).
+    """
     from rocm_mq import executor
 
     fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
@@ -591,7 +594,8 @@ def test_activate__second_call__noop_on_already_active_pr() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Per-handler idempotency (UK-3 second-call scenarios)
+# Per-handler idempotency (stateless-processor contract: second-call must
+# converge without error and without duplicate side effects).
 # ---------------------------------------------------------------------------
 
 
@@ -713,7 +717,8 @@ def test_idempotency__repos_merge_204__treated_as_success() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Post-squash verification — IO-05 / Pitfall 8
+# Post-squash verification — defence against the Apr-2026 silent-corruption
+# pattern (squash commit that does not actually advance develop).
 # ---------------------------------------------------------------------------
 
 
@@ -834,7 +839,8 @@ def test_verify_squash__get_commit_404_three_times__raises(
 
 
 # ---------------------------------------------------------------------------
-# Phase B — tree-diff sanity (SC#3 / Pitfall 8 silent-corruption defence)
+# Phase B — tree-diff sanity (Apr-2026 silent-corruption defence: a squash
+# commit may carry the correct parent SHA yet apply no changes).
 # ---------------------------------------------------------------------------
 
 
@@ -866,8 +872,7 @@ def test_verify_squash__tree_diff_status_identical__raises_corrupt_squash_error(
     The squash commit's first parent correctly points at develop's tip
     (Phase A passes), but ``compare_commits(base...head)`` reports the two
     SHAs are content-identical — i.e. the squash applied no changes. This
-    is the canonical Pitfall 8 / April-2026 silent-corruption shape; Phase B
-    MUST reject it.
+    is the canonical Apr-2026 silent-corruption shape; Phase B MUST reject it.
     """
     from rocm_mq import executor
 
@@ -899,9 +904,9 @@ def test_verify_squash__tree_diff_files_empty__raises_corrupt_squash_error() -> 
     """Phase B failure: files=[] is the literal Apr-2026 silent-corruption shape.
 
     Status appears OK (``ahead``) but the changed-files list is empty: the
-    squash advanced develop with a commit that touched zero files. This is
-    exactly the silent-corruption pattern the RFC's Pitfall 8 was added to
-    defend against and SC#3's "plus tree-diff sanity" clause names.
+    squash advanced develop with a commit that touched zero files. The
+    parent-SHA check (Phase A) passes; only the tree-diff sanity check
+    (Phase B) catches this shape.
     """
     from rocm_mq import executor
 
@@ -959,7 +964,7 @@ def test_verify_squash__tree_diff_status_behind__raises_corrupt_squash_error() -
     just advanced develop. Without an explicit test, a future refactor that
     silently dropped 'behind' from the rejection set (e.g. by changing the
     pass condition from ``status == 'ahead'`` to ``status != 'identical'``)
-    would not fail any test (WR-03).
+    would not fail any test.
     """
     from rocm_mq import executor
 
@@ -1023,9 +1028,9 @@ def test_verify_squash__tree_diff_status_diverged__raises_corrupt_squash_error()
 def test_verify_squash__compare_commits_404_retries_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Phase B replication-lag retry (WR-01): first compare_commits 404, second OK.
+    """Phase B replication-lag retry: first compare_commits 404, second OK.
 
-    Same UK-4 read-replication visibility lag that motivates Phase A's retry
+    The same read-replication visibility lag that motivates Phase A's retry
     on ``get_commit`` also affects ``compare_commits`` — the API resolves the
     ``basehead`` URL by looking up both SHAs, and a replica that has not yet
     seen ``squash_sha`` raises 404. Phase B MUST share Phase A's retry budget
@@ -1065,7 +1070,7 @@ def test_verify_squash__compare_commits_404_retries_then_succeeds(
 def test_verify_squash__compare_commits_404_three_times__raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Phase B replication-lag exhaustion: all 3 attempts 404 → propagate (WR-01).
+    """Phase B replication-lag exhaustion: all 3 attempts 404 → propagate.
 
     Mirrors ``test_verify_squash__get_commit_404_three_times__raises`` for
     Phase B. Confirms the retry budget is finite and the underlying 404
@@ -1127,7 +1132,7 @@ def test_handle_squash__verify_failure__returns_failure_outcome(
 
     assert outcome.success is False
     assert outcome.error_message is not None
-    # Pitfall 8 — error message preserves the corrupt-squash context.
+    # Error message preserves the corrupt-squash context for operator triage.
     assert "parent" in outcome.error_message.lower() or "squash" in outcome.error_message.lower()
 
 
@@ -1143,7 +1148,7 @@ def test_handle_squash__phase_b_failure__returns_failure_outcome(
     ActionOutcome(success=False, error_message=...). Without this test the
     `except CorruptSquashError` arm of _handle_squash could regress for
     Phase-B-only failures (e.g. a refactor that changed Phase B to raise a
-    different exception type) and no test would notice (WR-04).
+    different exception type) and no test would notice.
 
     Drives Phase B failure by monkeypatching compare_commits to return the
     canonical Apr-2026 silent-corruption shape (status='identical'); Phase A
@@ -1218,7 +1223,7 @@ def test_find_status_comment_id__no_marker__returns_none() -> None:
 def test_find_status_comment_id__marker_on_later_page__found(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Marker on page 2 of a paginated comment list is still discoverable (WR-03).
+    """Marker on page 2 of a paginated comment list is still discoverable.
 
     The previous single-page implementation could miss the marker comment
     on busy PRs (>30 comments), causing _handle_update_comment to create a
@@ -1252,7 +1257,7 @@ def test_find_status_comment_id__marker_on_later_page__found(
 
     found = executor._find_status_comment_id(client, "org", "repo", 42)
     assert found == 201, (
-        "regression: pagination missed the marker on page 2 (WR-03)"
+        "regression: pagination missed the marker on page 2"
     )
     # Must have requested at least page=1 with per_page=100, then page=2.
     pages_requested = [c.get("page") for c in call_log]

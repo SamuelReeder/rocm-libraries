@@ -3,31 +3,19 @@ rocm_mq.summary — Pure cycle-summary renderer (RFC §4.6 $GITHUB_STEP_SUMMARY)
 
 Single public function: ``render_cycle_summary(snapshot, actions, outcomes, render_ctx) -> str``.
 
-**Pure function contract (RFC §4.9 + PURE-09):**
+**Pure function contract (RFC §4.9):**
   - No ``datetime.now()`` / ``datetime.utcnow()`` / ``datetime.fromisoformat()`` calls;
     timestamps are taken from ``render_ctx`` args only.
   - No I/O: no ``os.environ``, no ``subprocess``, no network calls.
   - No persistent state.
 
-**RFC §4.6 four-section layout (T-01-10):**
+**RFC §4.6 four-section layout:**
   1. ``## Queue depth`` — per-queue depth table from ``render_ctx.queue_depths``.
   2. ``## Active PRs`` — PRs with ``mq:active`` label in the snapshot.
   3. ``## Cycle outcomes`` — one line per Action+Outcome pair, dispatched via
      ``match action: ... case _: assert_never(action)`` (exhaustiveness enforced by
      mypy --strict on this module).
   4. ``## Cycle duration`` — formatted ``Mm:Ss`` or ``Hh:Mm``.
-
-**Active-label assumption (documented per plan spec):**
-  ``render_cycle_summary`` hardcodes ``"mq:active"`` as the label that indicates a
-  PR is active. This label name is a project-wide constant (per CLAUDE.md and
-  MergeQueueConfig.active_label default). Phase 4 may pass the config's active_label
-  value through CycleRenderContext if per-config label names are ever needed.
-
-**assert_never exhaustiveness (T-01-10):**
-  The ``match action`` in _render_outcomes uses ``case _: assert_never(action)`` so
-  that mypy --strict raises a type error when a new Action variant is added to state.py
-  without a corresponding match arm here. The exhaustiveness regression test in
-  test_summary_render.py double-checks at runtime.
 """
 
 from __future__ import annotations
@@ -48,8 +36,7 @@ from rocm_mq.state import (
 )
 
 # Active label used to filter snapshot.prs for the "Active PRs" section.
-# Documented assumption: this is the project-wide constant from MergeQueueConfig.active_label.
-# Phase 4 may thread the active_label value through CycleRenderContext if needed.
+# Matches MergeQueueConfig.active_label default.
 _ACTIVE_LABEL = "mq:active"
 
 
@@ -82,8 +69,8 @@ def render_cycle_summary(
         Full markdown string for the GitHub Step Summary.
 
     Raises:
-        ValueError: When ``len(actions) != len(outcomes)`` (Phase 2 executor
-            guarantees parity; Phase 1 defends defensively).
+        ValueError: When ``len(actions) != len(outcomes)`` — the executor
+            guarantees parity; this is a defensive check.
     """
     if len(actions) != len(outcomes):
         raise ValueError(
@@ -113,13 +100,8 @@ def render_cycle_summary(
 def _render_queue_depth(render_ctx: CycleRenderContext) -> str:
     """Section 1: Per-queue depth table.
 
-    Uses ``render_ctx.queue_depths`` (``tuple[tuple[str, int], ...]``) as the
-    total depth per queue. Active-PR counts per queue are not carried in
-    CycleRenderContext (D-03 — renderer-only data only); the "Active" column
-    shows the total depth as a proxy. Phase 4 may refine this if needed.
-
-    Note: CycleRenderContext.queue_depths carries ``(queue_name, depth)`` pairs
-    (total depth, not split queued/active). The renderer renders depth as-is.
+    Renders ``render_ctx.queue_depths`` (``tuple[tuple[str, int], ...]``) —
+    one row per queue with the total depth (queued + active) for that queue.
     """
     lines: list[str] = ["## Queue depth", "", "| Queue | Depth |", "|---|---|"]
     for queue_name, depth in render_ctx.queue_depths:
@@ -131,7 +113,6 @@ def _render_active_prs(snapshot: Snapshot) -> str:
     """Section 2: Active PRs in the snapshot.
 
     Filters ``snapshot.prs`` to those with ``mq:active`` in labels.
-    Hardcodes ``"mq:active"`` — see module-level note on active-label assumption.
     """
     active = [pr for pr in snapshot.prs if _ACTIVE_LABEL in pr.labels]
     lines: list[str] = ["## Active PRs", ""]
@@ -153,7 +134,7 @@ def _render_outcomes(
 
     Dispatches on the Action variant with ``match action``.
     ``case _: assert_never(action)`` enforces exhaustiveness at mypy --strict
-    time (Pitfall 5 / T-01-10).
+    time.
 
     A failed outcome appends ``— FAILED: {error_message}`` to the action line.
     When no actions occurred, renders ``_No actions this cycle._``.
@@ -177,7 +158,8 @@ def _render_outcomes(
                 pr_number = pr.number  # works for both PRState and PartialPRState
                 line = f"- ⏸ Defer #{pr_number}: {reason}"
             case _:
-                assert_never(action)  # mypy --strict exhaustiveness (T-01-10)
+                # Exhaustive match — add new Action variants here.
+                assert_never(action)
 
         if not outcome.success:
             line += f" — FAILED: {outcome.error_message}"

@@ -6,30 +6,17 @@ Three public functions:
   - ``derive_snapshot(raw, config, now) -> tuple[Snapshot, tuple[Defer, ...]]``
   - ``decide_cycle(snapshot, config, now) -> list[Action]``
 
-Required-CI-check evaluation is delegated to GitHub branch protection
-per 03-wr-09: ``decide_cycle`` unconditionally emits ``Squash`` for any
-validly-active head-of-queue PR, and ``executor._handle_squash``
-translates a merge-API 405/422 into ``Eject`` (failing required check)
-or no-op (pending check — retry next cycle). This removes a class of
-config-drift bug between ``path_to_queues.yml`` and protection state.
+Required-CI-check evaluation is delegated to GitHub branch protection so the
+queue's config and branch protection cannot drift out of sync (RFC §4.8):
+``decide_cycle`` unconditionally emits ``Squash`` for any validly-active
+head-of-queue PR, and ``executor._handle_squash`` translates a merge-API
+405/422 into ``Eject`` (failing required check) or no-op (pending check —
+retry next cycle).
 
-**Pure function contract (RFC §4.9 + PURE-09):**
+**Pure function contract (RFC §4.9):**
   - No ``datetime.now()`` / ``datetime.utcnow()`` calls; ``now`` is always an arg.
   - No I/O: no ``os.environ``, no ``subprocess``, no ``requests``/``httpx``/``githubkit``.
   - No persistent state: every call reconstructs from the snapshot (RFC §4.6).
-
-**Design decisions (CONTEXT.md):**
-  - D-01: Pure-layer derive over a raw + derived dataclass split.
-  - D-02: Creator filter (``is_app_identity``) applied in derive, not in I/O.
-  - D-03: ``PRState`` decision-only; renderer fields in ``RenderContext``.
-  - D-04: ``Snapshot`` flat tuple; ``now`` as separate arg.
-  - Q1: ``derive_pr`` returns ``PRState | DeferredPR``.
-  - Q4: ``Defer.pr`` is ``PRState | PartialPRState``.
-
-**Pitfalls guarded:**
-  - Pitfall 2 (impersonation): ``is_app_identity`` triple-check via ``_helpers``.
-  - Pitfall 4 (timeline lag): three-case derive logic; Case 2 = label-without-event.
-  - Pitfall 7 (vacuous headship): ``if not pr.queues: return False`` in ``is_head_of_all``.
 """
 
 from __future__ import annotations
@@ -59,7 +46,7 @@ from rocm_mq.state import (
 
 
 # ---------------------------------------------------------------------------
-# derive_pr — three-case enqueued_at logic (RESEARCH.md lines 703-767)
+# derive_pr — three-case enqueued_at logic
 # ---------------------------------------------------------------------------
 
 
@@ -70,11 +57,11 @@ def derive_pr(
 ) -> PRState | DeferredPR:
     """Pure derivation of raw API state → decision-layer PRState.
 
-    Three cases (Pitfall 4 — timeline eventual consistency):
+    Three cases for handling GitHub timeline eventual consistency:
 
     **Case 3 — Tampered:** Non-App actor applied ``mq:queued`` AND no App-applied
     event exists. Returned as ``DeferredPR(reason="mq:queued applied by non-App actor")``.
-    Phase 4 audit catches this too, but the pure layer surfaces it independently.
+    The audit job catches this too, but the pure layer surfaces it independently.
 
     **Case 2 — Timeline lag:** ``mq:queued`` label is present but no App-applied
     ``mq:queued`` label event has become visible yet (GitHub timeline eventual
@@ -96,10 +83,10 @@ def derive_pr(
 
     ``is_validly_active`` requires BOTH the context filter (``status.context ==
     config.activation_status_context``) AND the creator filter
-    (``is_app_identity(status.creator, config.app_identity)``). See D-02.
+    (``is_app_identity(status.creator, config.app_identity)``) — RFC §4.3.1.
 
     Args:
-        raw: Raw GitHub API state for one PR (constructed by Phase 2 ``snapshot.py``).
+        raw: Raw GitHub API state for one PR.
         config: Validated merge-queue configuration.
         now: Current cycle time (passed through; not used directly in derive logic
              but matches the function family signature for consistency with decide_cycle).
@@ -108,7 +95,7 @@ def derive_pr(
         ``PRState`` on normal derivation; ``DeferredPR`` on any of the three
         defer cases.
     """
-    # -- Filter mq:queued label events by App identity (Pitfall 2 family) --
+    # -- Filter mq:queued label events by App identity (RFC §4.3.1) --
     app_queued_events: tuple[LabelEvent, ...] = tuple(
         e
         for e in raw.mq_queued_label_events
@@ -162,7 +149,7 @@ def derive_pr(
         and lbl not in (config.queued_label, config.active_label)
     )
 
-    # is_validly_active: context AND creator (both filters required — D-02, Pitfall 2)
+    # is_validly_active: context AND creator (both filters required — RFC §4.3.1)
     is_validly_active: bool = any(
         s.context == config.activation_status_context
         and is_app_identity(s.creator, config.app_identity)
@@ -196,9 +183,9 @@ def derive_snapshot(
     - If ``derive_pr`` returns ``DeferredPR`` → synthesize a ``PartialPRState``
       from the raw fields and emit a ``Defer(pr=partial, reason=...)`` action.
 
-    The returned ``tuple[Defer, ...]`` is pre-emitted: callers (``cmd_process.py``
-    in Phase 2) prepend these to the action list from ``decide_cycle`` so that
-    the full list covers all PRs (derived + deferred).
+    The returned ``tuple[Defer, ...]`` is pre-emitted: the processor prepends
+    these to the action list from ``decide_cycle`` so the full list covers all
+    PRs (derived + deferred).
 
     Returns:
         ``(Snapshot, tuple[Defer, ...])``
@@ -212,7 +199,9 @@ def derive_snapshot(
             case PRState() as pr:
                 pr_states.append(pr)
             case DeferredPR(number=_, reason=r):
-                # Q4 resolution: carry the partial raw state for the executor
+                # Carry the partial raw state so the executor can still
+                # reference the PR (number/head_sha/labels) when reporting
+                # the Defer outcome, even though full derivation failed.
                 partial = PartialPRState(
                     number=raw_pr.number,
                     head_sha=raw_pr.head_sha,
@@ -224,7 +213,7 @@ def derive_snapshot(
 
 
 # ---------------------------------------------------------------------------
-# decide_cycle — RFC §4.6 steps 3-5 (RESEARCH.md lines 622-687)
+# decide_cycle — RFC §4.6 steps 3-5
 # ---------------------------------------------------------------------------
 
 
@@ -244,8 +233,9 @@ def decide_cycle(
 
     Step 4: Identify ready PRs.
       ``is_head_of_all(pr)`` returns True iff ``pr`` is at position 0 in every
-      queue in ``pr.queues``.  Returns False when ``pr.queues`` is empty (Pitfall 7
-      guard — prevents ``all([])`` vacuous truth).
+      queue in ``pr.queues``. Returns False when ``pr.queues`` is empty — guards
+      against the vacuous-truth case where ``all([])`` would otherwise return True
+      and squash a PR with no queue membership at all.
 
     Step 5: Per-PR state machine (each ready PR dispatched once per cycle):
       5a. No ``mq:active`` label → ``Activate(pr)``; ``continue`` (MANDATORY).
@@ -254,11 +244,9 @@ def decide_cycle(
           invariant from RFC §4.6 closing bullet.
       5b. Has ``mq:active`` label:
           - NOT ``is_validly_active`` → ``Eject(pr, "activation invalid ...")``.
-          - Valid + all checks passed → ``Squash(pr)``.
-          - Valid + any check failed → ``Eject(pr, <first failed check name>)``.
-          - Valid + all pending → no action (retry next cycle).
+          - Valid → ``Squash(pr)`` unconditionally; the executor translates
+            branch-protection rejections into Eject/no-op (RFC §4.8).
 
-    **Q2 resolution (RESEARCH.md Open Question 2):**
     The "activation and evaluation never in same cycle" rule is PER-PR, not
     globally per-cycle. When PRs A (in queue "hipdnn") and B (in queue
     "miopen-provider") are both at the head of their respective disjoint queues,
@@ -292,10 +280,12 @@ def decide_cycle(
     def is_head_of_all(pr: PRState) -> bool:
         """Return True iff pr is at position 0 in every queue it belongs to.
 
-        Returns False for empty queues (Pitfall 7: guards against all([]) == True).
+        Returns False for PRs with no queue membership — guards against
+        ``all([])`` returning True (vacuous truth would let an unrouted PR
+        squash-merge).
         """
         if not pr.queues:
-            return False  # Pitfall 7: empty queues is never head-of-all
+            return False
         return all(
             members_by_queue[q] and members_by_queue[q][0].number == pr.number
             for q in pr.queues
@@ -309,7 +299,7 @@ def decide_cycle(
             # 5a: Not yet active — emit Activate and CONTINUE.
             # The continue is mandatory: it prevents any 5b action for this PR
             # in the same cycle, enforcing "activation and evaluation never happen
-            # in the same cycle per PR" (RFC §4.6 closing bullet, Pitfall 5).
+            # in the same cycle per PR" (RFC §4.6 closing bullet).
             actions.append(Activate(pr=pr))
             continue  # MANDATORY: no 5b dispatch for this PR this cycle
 
@@ -324,14 +314,12 @@ def decide_cycle(
             )
             continue
 
-        # Activation is valid — emit Squash unconditionally.
-        # Per 03-wr-09 refactor: required-check evaluation is delegated to
-        # GitHub branch protection (single source of truth). The executor's
-        # _handle_squash translates a 405/422 from the merge API into either
-        # Eject (failing required check, named in the error body) or no-op
-        # (pending required check — try next cycle). This removes a class
-        # of config-drift bug between path_to_queues.yml's `required_checks`
-        # list and branch protection's actual required-checks settings.
+        # Activation is valid — emit Squash unconditionally. Required-check
+        # evaluation is delegated to branch protection (the single source of
+        # truth) so the queue and branch protection cannot drift out of sync
+        # (RFC §4.8). The executor's _handle_squash translates a 405/422 from
+        # the merge API into either Eject (failing required check, named in
+        # the error body) or no-op (pending required check — try next cycle).
         actions.append(Squash(pr=pr))
 
     return actions

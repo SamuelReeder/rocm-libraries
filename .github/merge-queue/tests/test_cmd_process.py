@@ -1,17 +1,16 @@
-"""
-tests/test_cmd_process.py — End-to-end tests for the rocm_mq process-cycle CLI.
+"""End-to-end tests for the rocm_mq process-cycle CLI.
 
-Covers IO-07 (cmd_process orchestrates build_snapshot → derive_snapshot →
-decide_cycle → dispatch end-to-end against ``FakeGitHub``) and DOG-01 ("no real
-GitHub API call" property — the full read→decide→execute chain runs without
-touching the network).
+cmd_process orchestrates build_snapshot → derive_snapshot → decide_cycle →
+dispatch end-to-end against ``FakeGitHub``. These tests also assert the
+"no real GitHub API call" property — the full read→decide→execute chain
+runs without touching the network when invoked with --fake.
 
 Test strategy:
 - Drive ``cmd_process.process_cycle`` directly (not via subprocess) for speed.
 - Use ``FakeGitHub`` (tests.gh_fake) as the client; seed ``FakeRepoState``
   per scenario; assert mutations land on the fake.
-- DOG-01 assertion: monkeypatch ``httpx.Client.send`` to fail loudly if any
-  real HTTP request is attempted in --fake mode.
+- No-real-HTTP assertion: monkeypatch ``httpx.Client.send`` to fail loudly
+  if any real HTTP request is attempted in --fake mode.
 - ``main()`` tests use ``monkeypatch.setattr(sys, "argv", ...)`` and assert
   exit behaviour.
 
@@ -42,8 +41,8 @@ def _seed_activate_scenario() -> FakeGitHub:
 
     The PR carries ``mq:queued`` + ``mq:miopen-provider`` labels so the search
     discovers it; the App-applied ``mq:queued`` labelling event is pre-seeded
-    in ``state.label_log`` so ``derive_pr`` treats the PR as Case 1 (normal,
-    not deferred) and ``decide_cycle`` emits ``Activate(pr)``.
+    in ``state.label_log`` so ``derive_pr`` treats the PR as the normal
+    (non-deferred) case and ``decide_cycle`` emits ``Activate(pr)``.
 
     The fake's ``_patch_pulls_get_to_return_branch`` /
     ``_patch_repos_merge_to_advance_pr_head`` shims (see test_executor.py)
@@ -136,7 +135,7 @@ def test_process_cycle__fake__activate_scenario() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. DOG-01: no real HTTP requests in --fake mode
+# 2. No real HTTP requests in --fake mode
 # ---------------------------------------------------------------------------
 
 
@@ -154,7 +153,7 @@ def test_process_cycle__fake__no_real_api_call(monkeypatch: pytest.MonkeyPatch) 
     def boom(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError(
             "process_cycle(--fake) attempted a real HTTP request — "
-            "DOG-01 violation"
+            "--fake mode must stay fully offline"
         )
 
     monkeypatch.setattr(httpx.Client, "send", boom)
@@ -397,7 +396,7 @@ def test_github_step_summary__written_on_success(
 
 
 # ---------------------------------------------------------------------------
-# 8b. cycle-summary.md file sink (RESEARCH.md Area #11 — artifact pattern)
+# 8b. cycle-summary.md file sink (download-as-artifact pattern)
 # ---------------------------------------------------------------------------
 
 
@@ -407,9 +406,9 @@ def test_cycle_summary_file_sink__written_alongside_step_summary(
 ) -> None:
     """process_cycle writes the same content to BOTH sinks.
 
-    The cycle-summary.md sink is the source the dogfood driver workflows
-    download via actions/upload-artifact (RESEARCH.md Area #11). It must
-    receive the same rendered summary that lands in $GITHUB_STEP_SUMMARY.
+    The cycle-summary.md sink is the source that consumer workflows download
+    via actions/upload-artifact. It must receive the same rendered summary
+    that lands in $GITHUB_STEP_SUMMARY.
     """
     from rocm_mq import cmd_process
 
@@ -563,8 +562,10 @@ def test_process_cycle__now_threaded_through_to_decide_cycle(
 ) -> None:
     """The ``now`` argument must be passed to derive_snapshot AND decide_cycle.
 
-    Pinning this contract guards the PATTERNS.md "now threading" rule: only
-    cmd_process is allowed to call datetime.now(tz=UTC) at cycle scope.
+    Pinning this contract guards the "now threading" rule: only cmd_process
+    is allowed to call datetime.now(tz=UTC) at cycle scope; every downstream
+    callee receives the captured timestamp as an argument so cycles are
+    deterministic and testable.
     """
     from rocm_mq import cmd_process
 
@@ -640,18 +641,18 @@ def test_process_cycle__pre_defers_emitted_as_defer_actions(
 
 
 # ---------------------------------------------------------------------------
-# 13. CR-01: _build_default_config must NEVER ship sentinel zeros
+# 13. _build_default_config must NEVER ship sentinel zeros
 # ---------------------------------------------------------------------------
 
 
 def test_build_default_config__requires_resolved_app_identity() -> None:
-    """_build_default_config must take a non-stub AppIdentity (CR-01).
+    """regression guard: _build_default_config must take a non-stub AppIdentity.
 
-    Regression guard for the bug where _build_default_config() returned a
-    MergeQueueConfig with AppIdentity(app_id=0, bot_user_id=0). With zero
-    sentinels, every is_app_identity / is_app_identity_actor check in the
-    decision layer rejects legitimate events and no PR ever activates or
-    squashes in production.
+    Pins the bug where _build_default_config() returned a MergeQueueConfig
+    with AppIdentity(app_id=0, bot_user_id=0). With zero sentinels, every
+    is_app_identity / is_app_identity_actor check in the decision layer
+    rejects legitimate events and no PR ever activates or squashes in
+    production.
 
     The fixed signature is keyword-only and required, so accidentally
     calling _build_default_config() with no app_identity is a type error.
@@ -663,16 +664,16 @@ def test_build_default_config__requires_resolved_app_identity() -> None:
     resolved = AppIdentity(slug="rocm-mq", app_id=12345, bot_user_id=99999)
     config = cmd_process._build_default_config(app_identity=resolved)
     assert config.app_identity.app_id != 0, (
-        "regression: _build_default_config produced a stub AppIdentity (CR-01)"
+        "regression: _build_default_config produced a stub AppIdentity"
     )
     assert config.app_identity.bot_user_id != 0, (
-        "regression: _build_default_config produced a stub bot_user_id (CR-01)"
+        "regression: _build_default_config produced a stub bot_user_id"
     )
     assert config.app_identity is resolved
 
 
 def test_main__fake_flag__resolves_app_identity_from_fake() -> None:
-    """main() --fake threads FakeGitHub's apps/users namespaces into config (CR-01).
+    """main() --fake threads FakeGitHub's apps/users namespaces into config.
 
     The fake's _AppsNS.get_authenticated returns id=12345/slug="rocm-mq" and
     _UsersNS.get_by_username("rocm-mq[bot]") returns id=99999 — so
@@ -721,17 +722,13 @@ def test_cmd_process_module_importable() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 14. Subparser refactor — _parse_args produces per-subcommand namespaces
+# 14. Subparser dispatch — _parse_args produces per-subcommand namespaces
 # ---------------------------------------------------------------------------
 #
-# Phase 3 plan-01: pays the W-5 LOCKED-but-deviated argparse debt from Phase 2
-# by promoting the flat ``choices=["process-cycle"]`` positional to
-# ``add_subparsers(dest="subcommand", required=True)`` with four subparsers
-# (process-cycle, handle, audit, preflight). Each subparser registers a
-# ``set_defaults(func=run_*)`` so ``main()`` reduces to ``args.func(args)``.
-#
-# These tests pin the new shape; the existing process-cycle tests above
-# continue to assert byte-identical end-to-end behavior under --fake.
+# The CLI uses ``add_subparsers(dest="subcommand", required=True)`` with four
+# subparsers (process-cycle, handle, audit, preflight). Each subparser
+# registers a ``set_defaults(func=run_*)`` so ``main()`` reduces to
+# ``args.func(args)``. These tests pin the subparser shape.
 
 
 def test_parse_args_subcommand_required() -> None:
@@ -794,25 +791,28 @@ def test_parse_args_preflight_dispatches_to_run_preflight() -> None:
 
 
 def test_main_audit_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
-    """audit is a Phase 3 no-op stub: exits 0 with a stderr note."""
+    """audit is currently a no-op stub: exits 0 with a stderr note.
+
+    The stub announces itself in stderr so operators don't mistake the
+    no-op for "audit logic ran"; a future change fills in the RFC §4.3.1
+    auditor matrix.
+    """
     from rocm_mq import cmd_process
 
     rc = cmd_process.main(["audit"])
     assert rc == 0
     err = capsys.readouterr().err
-    # The Phase 3 audit stub announces itself so operators don't mistake the
-    # no-op for "audit logic ran"; Phase 4 fills in the RFC §4.3.1 matrix.
     assert "audit" in err.lower()
-    assert "phase 4" in err.lower() or "no-op" in err.lower()
+    assert "no-op" in err.lower() or "stub" in err.lower()
 
 
 def test_main_handle_dispatches_to_module(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
 ) -> None:
-    """handle subcommand dispatches into rocm_mq.cmd_handle.main (plan 03-06 wiring).
+    """handle subcommand dispatches into rocm_mq.cmd_handle.main.
 
-    The NotImplementedError stub from plan 03-01 is replaced by a real
+    The previous NotImplementedError stub is replaced by a real
     delegation to rocm_mq.cmd_handle.main. Pin both layers of behaviour:
 
       1. cmd_process.run_handle calls cmd_handle.main with --repo and
@@ -874,9 +874,9 @@ def test_main_preflight_dispatches_to_module(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """preflight subcommand dispatches into rocm_mq.preflight.main (plan 03-04 wiring).
+    """preflight subcommand dispatches into rocm_mq.preflight.main.
 
-    The NotImplementedError stub from plan 03-01 is replaced by a real
+    The previous NotImplementedError stub is replaced by a real
     delegation to rocm_mq.preflight.main. Pin both layers of behaviour:
 
       1. cmd_process.run_preflight calls preflight.main with the parsed --repo

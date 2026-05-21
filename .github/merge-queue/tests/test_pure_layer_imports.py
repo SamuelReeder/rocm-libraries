@@ -1,6 +1,6 @@
-"""PURE-09 AST walker — enforces zero I/O imports in the pure decision layer.
+"""AST walker — verifies no I/O symbols are imported by the pure decision layer.
 
-Three enforcement rules, all using stdlib ``ast`` only (zero external deps):
+Four enforcement rules, all using stdlib ``ast`` only (zero external deps):
 
 1. ``test_pure_layer_no_io_imports``: walks every ``Import`` / ``ImportFrom``
    node in each pure-layer module and asserts that every import is on the
@@ -11,29 +11,27 @@ Three enforcement rules, all using stdlib ``ast`` only (zero external deps):
    ``ast.Attribute`` node in each pure-layer module (excluding ``_helpers``
    which legitimately calls ``datetime.fromisoformat``) and asserts that
    ``datetime.now``, ``datetime.utcnow``, and ``datetime.fromisoformat`` are
-   not called outside ``_helpers.py``.
+   not called outside ``_helpers.py``. This keeps the chokepoint for naive-
+   datetime construction in one auditable file.
 
-3. ``test_test_files_no_naive_datetime_constructor`` (Q5 resolution): walks
-   every ``test_*.py`` file in ``tests/`` and bans ``datetime(...)`` constructor
-   calls that lack a ``tzinfo=`` keyword argument.  This prevents Pitfall 3
-   (naive-datetime FIFO corruption) in test code.
-
-   Rationale (Open Question 5, RESEARCH.md lines 1500-1504): the ``utc()``
-   helper in ``conftest.py`` is the recommended way to build tz-aware datetimes
-   in new test code.  The Q5 lint only flags calls that are demonstrably naive
-   (no ``tzinfo=`` keyword) rather than banning all ``datetime(...)`` calls, so
-   existing tz-aware ``datetime(..., tzinfo=UTC)`` calls in prior-plan test files
-   are not flagged.  Files that intentionally construct naive datetimes (e.g.,
-   ``test_state_dataclasses.py`` which tests that naive datetimes are rejected)
-   are in the exclusion list.
+3. ``test_test_files_no_naive_datetime_constructor``: walks every
+   ``test_*.py`` file in ``tests/`` and bans ``datetime(...)`` constructor
+   calls that lack a ``tzinfo=`` keyword argument. This prevents naive-
+   datetime FIFO corruption in test code. The ``utc()`` helper in
+   ``conftest.py`` is the recommended way to build tz-aware datetimes in
+   new test code. The lint only flags calls that are demonstrably naive
+   (no ``tzinfo=`` keyword) rather than banning all ``datetime(...)`` calls,
+   so existing tz-aware ``datetime(..., tzinfo=UTC)`` calls are not flagged.
+   Files that intentionally construct naive datetimes (e.g.
+   ``test_state_dataclasses.py`` which tests that naive datetimes are
+   rejected) are in the exclusion list.
 
 4. ``test_io_import_walker_is_not_a_noop`` (positive regression): verifies the
    walker actually flags a synthetic ``import requests`` source string, guarding
-   against a future refactor that silently no-ops the walker (T-01-16).
+   against a future refactor that silently no-ops the walker.
 
 Failure-message hygiene: every assertion message includes the module name and
-the specific construct so the failure log is actionable on first read (RESEARCH.md
-"Failure message shape" line 1244).
+the specific construct so the failure log is actionable on first read.
 """
 
 from __future__ import annotations
@@ -46,7 +44,7 @@ import pytest
 import rocm_mq
 
 # ---------------------------------------------------------------------------
-# Module-level constants (RESEARCH.md CI Lint section lines 1174-1198)
+# Module-level constants — pure-layer module list, allow/deny lists
 # ---------------------------------------------------------------------------
 
 PURE_LAYER_MODULES: tuple[str, ...] = (
@@ -172,7 +170,7 @@ def test_pure_layer_no_io_imports(module_name: str) -> None:
 
 # ---------------------------------------------------------------------------
 # Test 2: No datetime.now / datetime.utcnow / datetime.fromisoformat outside
-# _helpers (Pitfall 3 chokepoint enforcement)
+# _helpers (naive-datetime chokepoint enforcement)
 # ---------------------------------------------------------------------------
 
 _BANNED_DATETIME_ATTRS = frozenset({"now", "utcnow", "fromisoformat"})
@@ -186,9 +184,10 @@ def test_pure_layer_no_naive_datetime_constructors(module_name: str) -> None:
     """Assert no datetime.now / datetime.utcnow / datetime.fromisoformat outside _helpers.
 
     ``_helpers.py`` is the ONLY sanctioned caller of ``datetime.fromisoformat``
-    (Pitfall 3 chokepoint).  All other pure-layer modules receive already-parsed,
-    tz-aware datetimes.  ``datetime.now`` and ``datetime.utcnow`` are banned
-    everywhere in the pure layer — ``now`` is always passed as an argument.
+    (single chokepoint for parsing untrusted timestamps). All other pure-layer
+    modules receive already-parsed, tz-aware datetimes. ``datetime.now`` and
+    ``datetime.utcnow`` are banned everywhere in the pure layer — ``now`` is
+    always passed as an argument.
 
     Detection strategy: walk every ``ast.Attribute`` node.  Flag when:
     - ``node.value`` is ``ast.Name(id="datetime")`` AND
@@ -218,20 +217,20 @@ def test_pure_layer_no_naive_datetime_constructors(module_name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 3: Q5 resolution — test files must not use naive datetime() constructors
+# Test 3: test files must not use naive datetime() constructors
 #
-# Open Question 5 (RESEARCH.md lines 1500-1504): the utc() helper in
-# conftest.py is the sanctioned way to build tz-aware datetimes in test code.
-# This lint bans datetime() calls WITHOUT a tzinfo= keyword argument (i.e.,
-# only flags demonstrably naive constructors; tz-aware calls are permitted).
+# The utc() helper in conftest.py is the sanctioned way to build tz-aware
+# datetimes in test code. This lint bans datetime() calls WITHOUT a tzinfo=
+# keyword argument (only flags demonstrably naive constructors; tz-aware
+# calls are permitted).
 #
 # Exclusion list:
 # - conftest.py — defines utc() helper; legitimately uses datetime directly
-# - _strategies.py — Hypothesis strategy scaffolding (Plan 04)
-# - _state_machine_base.py — state-machine base class (Plan 04)
+# - _strategies.py — Hypothesis strategy scaffolding
+# - _state_machine_base.py — Hypothesis state-machine base class
 # - test_pure_layer_imports.py — the lint itself (avoid recursion)
 # - test_state_dataclasses.py — intentionally constructs naive datetimes to
-#   test that they are rejected by the dataclass field contracts (Plan 01)
+#   test that they are rejected by the dataclass field contracts
 # ---------------------------------------------------------------------------
 
 _TEST_DIR = Path(__file__).parent
@@ -248,7 +247,7 @@ _Q5_EXCLUDED_STEMS = frozenset(
 
 
 def test_test_files_no_naive_datetime_constructor() -> None:
-    """Q5: test files must not construct naive datetimes via bare datetime().
+    """Test files must not construct naive datetimes via bare datetime().
 
     Walks every ``test_*.py`` file in the ``tests/`` directory (excluding the
     files listed in ``_Q5_EXCLUDED_STEMS``).  Flags any ``ast.Call`` node that:
@@ -262,7 +261,8 @@ def test_test_files_no_naive_datetime_constructor() -> None:
     ``datetime(2026, 1, 1)`` (no tzinfo) trigger a violation.
 
     Failing calls should be replaced with ``utc(year, month, day, ...)`` from
-    ``tests.conftest`` (the Pitfall 3 chokepoint for test code).
+    ``tests.conftest`` (the single chokepoint for tz-aware construction in
+    test code).
     """
     violations: list[str] = []
 
@@ -301,18 +301,13 @@ def test_test_files_no_naive_datetime_constructor() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 4: Positive PURE-09 — I/O layer modules MUST import githubkit
+# Test 4: Symmetric positive guard — I/O layer modules MUST import githubkit
 #
-# Symmetric guard to Test 1: if Test 1 catches "pure code accidentally pulled
-# in I/O imports", this test catches "I/O code accidentally pure-fied"
-# (e.g., someone replaces a real githubkit call with a stub and removes the
-# import, breaking the I/O contract silently).
-#
-# The list grows with Phase 2: gh.py exists after Plan 02-01; snapshot.py is
-# added in Plan 02-02; executor.py in Plan 02-03.  Until those modules exist
-# the parametrized case is skipped (not a failure) so this plan's test passes
-# in isolation while still asserting the contract for any module that does
-# exist.
+# If Test 1 catches "pure code accidentally pulled in I/O imports", this test
+# catches "I/O code accidentally pure-fied" (e.g., someone replaces a real
+# githubkit call with a stub and removes the import, breaking the I/O
+# contract silently). Modules that don't yet exist are skipped (not a
+# failure) so this asserts the contract only for modules that exist.
 # ---------------------------------------------------------------------------
 
 IO_LAYER_MODULES: tuple[str, ...] = ("gh", "snapshot", "executor")
@@ -320,12 +315,11 @@ IO_LAYER_MODULES: tuple[str, ...] = ("gh", "snapshot", "executor")
 
 @pytest.mark.parametrize("module_name", IO_LAYER_MODULES)
 def test_io_modules_do_import_githubkit(module_name: str) -> None:
-    """Assert each rocm_mq I/O module imports githubkit (PURE-09 positive).
+    """Assert each rocm_mq I/O module imports githubkit.
 
-    Skips when the module file does not yet exist (Plans 02-02 / 02-03 add
-    ``snapshot.py`` and ``executor.py``).  Once the module exists, the test
-    walks its imports and asserts at least one is ``githubkit`` or a
-    ``githubkit.*`` submodule.
+    Skips when the module file does not yet exist. Once the module exists,
+    the test walks its imports and asserts at least one is ``githubkit`` or
+    a ``githubkit.*`` submodule.
 
     Failure message includes the module name so a regression is actionable on
     first read.
@@ -352,8 +346,8 @@ def test_io_modules_do_import_githubkit(module_name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 5: Positive regression — walker MUST flag a synthetic banned import
-# (T-01-16: guards against a silent no-op refactor of the walker)
+# Test 5: Positive regression — walker MUST flag a synthetic banned import.
+# Guards against a silent no-op refactor of the walker.
 # ---------------------------------------------------------------------------
 
 

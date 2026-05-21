@@ -1,13 +1,12 @@
-"""
-test_invariant_app_creator_filter_unspoofable.py — RFC §6 / D-02 / Q3 resolution:
-App-creator filter is unspoofable.
+"""RFC §6 invariant: the App-creator filter on merge-queue/active status
+is unspoofable.
 
-Q3 resolution: This test uses adversarial Hypothesis fixtures (NOT RuleBasedStateMachine).
-The invariant-suite machinery (shadow state, per-cycle snapshots) is irrelevant here
-because the property is purely about derive_pr's is_validly_active computation on a
-single RawPRState — no cycle sequencing is needed.
+Uses adversarial Hypothesis fixtures (NOT RuleBasedStateMachine). The
+invariant-suite machinery (shadow state, per-cycle snapshots) is irrelevant
+here because the property is purely about derive_pr's is_validly_active
+computation on a single RawPRState — no cycle sequencing is needed.
 
-Five forged-creator variants (RESEARCH.md *Identity Helper* fixture matrix):
+Five forged-creator spoofing variants:
 1. Wrong slug  (right type + right id, wrong slug)
 2. Wrong app_id (right type + right slug, wrong id)
 3. type=User   (impersonator account with same login name)
@@ -57,7 +56,7 @@ def test_forged_activation_status_is_rejected(raw_pr) -> None:
 
     The mq:active label is present on the raw PR — the adversary has done
     everything they can short of creating the status with the canonical App.
-    derive_pr must still reject the activation via the creator filter (D-02).
+    derive_pr must still reject the activation via the creator filter.
     """
     result = derive_pr(raw_pr, _CONFIG, _NOW)
     # derive_pr returns PRState because mq:queued has a valid App-applied event;
@@ -76,7 +75,7 @@ def test_forged_activation_status_is_rejected(raw_pr) -> None:
 
 # ---------------------------------------------------------------------------
 # Fixture-driven adversarial tests: one test per forged-creator variant
-# These exhaustively pin the five specific attack vectors from RESEARCH.md.
+# These exhaustively pin the five attack-vector variants.
 # ---------------------------------------------------------------------------
 
 

@@ -24,7 +24,7 @@ FIXED_NOW = datetime(2026, 4, 22, 15, 26, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
-# Parametrized syrupy snapshot tests (RESEARCH.md lines 1141-1158)
+# Parametrized syrupy snapshot tests
 # ---------------------------------------------------------------------------
 
 

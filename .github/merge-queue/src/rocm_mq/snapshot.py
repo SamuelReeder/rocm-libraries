@@ -1,55 +1,18 @@
 """
-rocm_mq.snapshot — I/O adapter that builds a RawSnapshot from the GitHub API.
+rocm_mq.snapshot — I/O adapter that builds a ``RawSnapshot`` from the GitHub
+API for the pure decision layer (RFC §4.6).
 
-PURE-09 compliance statement: this module is NOT in PURE_LAYER_MODULES; it
-intentionally imports githubkit indirectly via ``rocm_mq.gh.GitHubClient`` and
-uses ``githubkit.exception`` for narrow error-type access. The pure decision
-layer (``derive_snapshot``/``decide_cycle``) consumes only the frozen
-``RawSnapshot`` dataclass returned by ``build_snapshot``; no githubkit types
-cross the I/O→pure boundary.
+The pure layer consumes only the frozen ``RawSnapshot`` dataclass; no
+githubkit types cross the I/O→pure boundary.
 
-Public surface (Phase 2 contract):
-- ``build_snapshot(client, config, owner, repo) -> RawSnapshot`` —
-  reads every PR that carries an ``mq:<queue>`` label across all configured
-  queues, fans out per-PR fetches (pull, statuses, timeline, checks, optionally
-  files), and assembles a ``RawSnapshot``.
+Required-check evaluation is delegated to GitHub branch protection
+(RFC §4.8); the executor parses the merge-API 405/422 response to translate
+protection-blocked merges into Eject actions. ``incomplete_results=True`` on
+any search response aborts the cycle (the stateless processor's next cron
+tick retries — RFC §4.6).
 
-Internal helpers (exposed for unit tests):
-- ``_make_status_creator(creator, config) -> CommitStatusCreator`` — bridges
-  the API's ``SimpleUser``-shaped creator (no ``app_id``/``app_slug`` fields)
-  to ``CommitStatusCreator``. Populates app fields only when ``type=="Bot"``
-  AND ``login == f"{slug}[bot]"`` exactly. Sibling workflow bots
-  ("github-actions[bot]") and User-type creators get ``None`` app fields.
-  This is RESEARCH.md Critical Discovery 1 — the API does not return App ID
-  on commit-status creators; we infer it from the login pattern + config.
-- ``_make_raw_pr_state(pr, statuses, timeline, files, config) -> RawPRState``
-  — pure assembly helper; no I/O.
-
-Per 03-wr-09: required-check evaluation is delegated to GitHub branch
-protection. ``snapshot.py`` no longer fetches check runs or maps them
-to pure-layer states — the executor parses the merge-API 405/422
-response to translate protection-blocked merges into Eject actions.
-
-Behaviour notes:
-- ``pulls.list_files`` is SKIPPED when the PR already carries any ``mq:<queue>``
-  label (OQ-2 resolution). The queue assignment was made by an earlier handler
-  cycle; refetching the file list would burn API budget for no decision impact.
-  The trade-off: ``RawPRState.changed_paths`` will be ``()`` in that case, and
-  ``derive_pr`` must not depend on path-based queue assignment for already-labelled
-  PRs (this matches the canonical RFC §4.2 contract — labels are the source of
-  truth once applied).
-- ``repos.list_commit_statuses_for_ref`` is still read into ``head_statuses``
-  (for the activation status creator filter and the post-squash idempotency
-  short-circuit). Per 03-wr-09 the read is no longer cross-loaded into
-  ``required_check_results`` — the activation marker is the only commit
-  status the decision layer reads.
-- ``incomplete_results=True`` on any search response aborts the cycle with an
-  ``AssertionError`` (T-02-02-02). The stateless processor (RFC §4.6) retries on
-  the next 3-min cron tick.
-
-Owner/repo plumbing: passed as explicit arguments rather than carried on
-``MergeQueueConfig`` to avoid widening the Phase 1 dataclass and the 5 test
-construction sites that depend on it (see 02-02-SUMMARY for the trade-off note).
+Owner/repo are passed as explicit arguments rather than carried on
+``MergeQueueConfig`` to avoid widening the dataclass.
 """
 
 from __future__ import annotations
@@ -69,18 +32,15 @@ from rocm_mq.state import (
 
 if TYPE_CHECKING:
     # GitHubClient is used purely as a type hint; keep the import behind
-    # TYPE_CHECKING so the linter does not flag it as unused at runtime. The
-    # PURE-09 positive lint (test_io_modules_do_import_githubkit) requires a
-    # real githubkit import at module level — see the explicit import below.
+    # TYPE_CHECKING so the linter does not flag it as unused at runtime.
     from rocm_mq.gh import GitHubClient
 
-# PURE-09 positive marker: this module MUST import githubkit at module level
-# so the I/O-layer lint (test_io_modules_do_import_githubkit) passes. We use
-# the exception type for narrow except clauses in the search guard below.
-import githubkit.exception as _ghkit_exc  # noqa: F401  (PURE-09 positive marker)
+# This module imports githubkit; pure-layer modules must not. The exception
+# type is used for narrow except clauses elsewhere in the I/O layer.
+import githubkit.exception as _ghkit_exc  # noqa: F401
 
 # ---------------------------------------------------------------------------
-# Creator bridging (Critical Discovery 1)
+# Creator bridging
 # ---------------------------------------------------------------------------
 
 
@@ -90,24 +50,24 @@ def _make_status_creator(
 ) -> CommitStatusCreator:
     """Bridge a SimpleUser-shaped creator to CommitStatusCreator.
 
-    The commit-status API returns the creator as ``SimpleUser`` (with ``login``,
-    ``type``, ``id`` — but NO ``app_id`` or ``app_slug``). To make
+    The commit-status API returns the creator as ``SimpleUser`` (with
+    ``login``, ``type``, ``id`` — but no ``app_id`` or ``app_slug``). To make
     ``is_app_identity`` work in the pure decision layer, we infer the App
     identity from the login pattern:
 
     1. If ``creator is None`` → return an empty stub (``type="User"`` so
-       ``is_app_identity`` will reject by type, never by missing field).
+       ``is_app_identity`` rejects by type, never by missing field).
     2. If ``creator.type == "Bot"`` AND ``creator.login == f"{slug}[bot]"`` →
        populate ``app_slug`` and ``app_id`` from ``config.app_identity``.
-    3. Otherwise → leave ``app_slug`` and ``app_id`` as ``None``. This matches
-       the canonical-vs-impersonator distinction enforced by ``is_app_identity``
-       (Pitfall 2): sibling workflow bots (``github-actions[bot]``) and User-type
-       creators must NEVER appear to be the merge-queue App.
+    3. Otherwise → leave ``app_slug`` and ``app_id`` as ``None``. Compares
+       creator type + slug to identify App-authored statuses: sibling
+       workflow bots (``github-actions[bot]``) and User-type creators must
+       never appear to be the merge-queue App.
 
-    Threat: a malicious actor cannot trigger the bridging by spoofing the login
-    string — GitHub itself enforces the ``[bot]`` suffix on App bot identities,
-    and the audit job's creator-filter cross-checks the per-status (App or
-    workflow) classification (RFC §4.3.1).
+    Threat: a malicious actor cannot trigger the bridging by spoofing the
+    login string — GitHub itself enforces the ``[bot]`` suffix on App bot
+    identities, and the audit job's creator-filter cross-checks the per-
+    status (App or workflow) classification (RFC §4.3.1).
     """
     if creator is None:
         return CommitStatusCreator(login="", type="User", app_slug=None, app_id=None)
@@ -151,12 +111,13 @@ def _make_raw_pr_state(
     """Assemble a RawPRState from githubkit API objects.
 
     No I/O. Pure function over already-fetched API responses. Every timestamp
-    flows through ``parse_gh_timestamp`` (the single chokepoint enforcing
-    Pitfall 3: naive-datetime FIFO corruption).
+    flows through ``parse_gh_timestamp`` — the single chokepoint that
+    guarantees timezone-aware datetimes (avoiding naive-datetime FIFO
+    corruption).
     """
     labels = frozenset(label.name for label in (pr.labels or []))
 
-    # head_statuses: full bridging via _make_status_creator (Critical Discovery 1)
+    # head_statuses: bridge SimpleUser creator → CommitStatusCreator.
     head_statuses = tuple(
         CommitStatus(
             context=str(s.context),
@@ -188,10 +149,8 @@ def _make_raw_pr_state(
             )
         )
 
-    # Per 03-wr-09: required-check evaluation is delegated to GitHub branch
-    # protection. The queue no longer loads check runs or maps them into
-    # required_check_results — the executor parses the merge API's 405/422
-    # response to decide eject-vs-retry on protection-blocked merges.
+    # Required-check results are not fetched here; branch protection enforces
+    # them at squash time (RFC §4.8).
 
     # changed_paths: tuple of file names (may be empty when list_files skipped)
     if files and not isinstance(files[0], str):
@@ -231,19 +190,21 @@ def build_snapshot(
 
     Workflow (RFC §4.6 + §4.9):
     1. Search each configured queue (``label:mq:<queue> is:pr is:open
-       repo:<owner>/<repo>``) and assert ``incomplete_results == False`` for
-       every page (T-02-02-02 — guards against silently-truncated PR sets).
+       repo:<owner>/<repo>``) and assert ``incomplete_results == False`` on
+       every page (guards against silently-truncated PR sets).
     2. Deduplicate PRs by number across queue searches; a PR labelled for
-       multiple queues should be fetched once.
-    3. Per unique PR, fan out: ``pulls.get`` (head SHA, labels), commit statuses,
-       timeline events, check runs. Skip ``pulls.list_files`` when the PR
-       already carries any ``mq:<queue>`` label (OQ-2 resolution: labels are
-       the source of truth once applied; refetching paths is API budget waste).
-    4. Assemble each ``RawPRState`` via ``_make_raw_pr_state`` (no I/O —
-       pure transformation).
+       multiple queues is fetched once.
+    3. Per unique PR, fan out: ``pulls.get``, commit statuses, timeline
+       events. ``pulls.list_files`` is SKIPPED when the PR already carries any
+       ``mq:<queue>`` label — labels are the source of truth once applied
+       (RFC §4.2), and refetching paths would burn API budget for no
+       decision impact. ``RawPRState.changed_paths`` will be ``()`` in that
+       case, and ``derive_pr`` must not depend on path-based queue assignment
+       for already-labelled PRs.
+    4. Assemble each ``RawPRState`` via ``_make_raw_pr_state`` (pure).
 
     Args:
-        client: GitHubClient — Phase 2-01 thin wrapper exposing ``.rest``.
+        client: GitHubClient — thin wrapper exposing ``.rest``.
         config: MergeQueueConfig — provides queue list, label prefix, and
             ``app_identity`` for the SimpleUser→CommitStatusCreator bridging.
         owner: GitHub repository owner (login).
@@ -262,18 +223,15 @@ def build_snapshot(
     pr_numbers: list[int] = []  # preserves first-seen order for stable output
     seen: set[int] = set()
     for queue in config.all_queues:
-        # Quote the label value (WR-02): GitHub search's `label:` qualifier
-        # parses colons specially, and labels like `mq:hipdnn` are documented-
-        # safe only when wrapped in double quotes. Silent search misses on
+        # GitHub search requires colon-quoting for label values that contain
+        # colons (e.g. `mq:queued` → `mq%3Aqueued`). Silent search misses on
         # colon-bearing labels would forget PRs from the queue — an RFC §6
         # head-of-all-queues violation.
         label_value = f"{config.label_prefix}{queue}"
         q = f'is:pr is:open repo:{owner}/{repo} label:"{label_value}"'
-        # per_page=100 (search API max) maximizes what we capture in one call.
-        # Full pagination is a Phase 3 follow-up (WR-02); for now we hard-
-        # guard against silent truncation via total_count below — the RFC's
-        # API-rate-limit budget assumes <30 PRs per cycle, so a per_page=100
-        # guard ringes the budget with comfortable headroom.
+        # per_page=100 is the search API maximum; full pagination is a
+        # follow-up. The total_count guard below fails loudly if a single
+        # queue ever exceeds 100 PRs.
         resp = client.rest.search.issues_and_pull_requests(q=q, per_page=100)
         data = resp.parsed_data
         assert not getattr(data, "incomplete_results", False), (
@@ -282,14 +240,10 @@ def build_snapshot(
         )
         items = list(getattr(data, "items", []) or [])
         total_count = int(getattr(data, "total_count", len(items)) or len(items))
-        # Hard guard against silent truncation (WR-02). If we ever exceed
-        # 100 PRs in one queue, this fails loudly rather than dropping PRs
-        # from the snapshot — at which point the Phase 3 pagination work
-        # becomes prerequisite.
         assert total_count <= len(items), (
             f"search for queue={queue!r} returned total_count={total_count} "
             f"but only {len(items)} items fit in per_page=100; pagination "
-            "is required (WR-02 follow-up). Aborting cycle."
+            "is required. Aborting cycle."
         )
         for item in items:
             number = int(item.number)
@@ -309,7 +263,7 @@ def build_snapshot(
         head_sha = str(pr_obj.head.sha)
         labels = frozenset(label.name for label in (pr_obj.labels or []))
 
-        # Commit statuses on the head SHA (Pitfall D: pagination — fetch all)
+        # Commit statuses on the head SHA.
         statuses_resp = client.rest.repos.list_commit_statuses_for_ref(
             owner, repo, head_sha
         )
@@ -323,11 +277,8 @@ def build_snapshot(
         timeline_data = timeline_resp.parsed_data
         timeline = list(timeline_data) if timeline_data is not None else []
 
-        # Per 03-wr-09: no check-runs fetch. Required-check evaluation
-        # lives in GitHub branch protection; executor reads merge-API
-        # response to translate protection-blocked merges to Eject.
-
-        # OQ-2: skip list_files when the PR is already labelled for a queue.
+        # Skip list_files when the PR is already labelled for a queue —
+        # labels are the source of truth once applied (RFC §4.2).
         if _has_queue_label(labels, config):
             files: list[Any] = []
         else:
