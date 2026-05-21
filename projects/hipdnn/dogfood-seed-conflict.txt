@@ -1,1 +1,1 @@
-seed-variant-A: chosen at dogfood seed time 2026-05-21T04:28:20.174724+00:00
+seed-variant-A: chosen at dogfood seed time 2026-05-21T04:30:17.019071+00:00
