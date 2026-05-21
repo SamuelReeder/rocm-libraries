@@ -217,6 +217,8 @@ def _check_at_enqueue_gates(
     pr_number: int,
     pr: Any,
     queues: frozenset[str],
+    *,
+    require_approval: bool = True,
 ) -> list[str]:
     """Check the four WF-02 at-enqueue gates; return list of failed-gate names.
 
@@ -266,21 +268,19 @@ def _check_at_enqueue_gates(
     if is_cross_repo and not getattr(pr, "maintainer_can_modify", True):
         failed.append("maintainer-edits-disabled")
 
-    # DOGFOOD-ONLY (2026-05-20): no-approval gate disabled for fork dogfood.
-    # The fork has only one collaborator and PR authors cannot self-approve
-    # per RFC §5, which blocked every dogfood driver that targets the
-    # accepted-merge path (DOG-02/03/04/05/06/07). The gate is redundant
-    # with branch protection's required-reviews setting — the actual
-    # safety property (no merge without an approval) is enforced by
-    # GitHub at the squash-merge step, not by this check. This block was
-    # a fail-fast UX layer. RE-ENABLE before upstream porting (Phase 5
-    # PORT-02 pre-flight checklist must include this line).
-    #
-    # reviews_resp = client.rest.pulls.list_reviews(owner, repo, pr_number)
-    # reviews = list(reviews_resp.parsed_data or [])
-    # has_approval = any(getattr(r, "state", "") == "APPROVED" for r in reviews)
-    # if not has_approval:
-    #     failed.append("no-approval")
+    # No-approval gate (RFC §5 / WF-02). Behavior is config-toggled via
+    # ``MergeQueueConfig.require_approval_at_enqueue`` so the dogfood fork
+    # can disable it (the fork has only one collaborator and PR authors
+    # cannot self-approve per RFC §5, blocking every dogfood driver) while
+    # the default-True preserves the upstream contract. PORT-02 closure:
+    # the config flag replaces a code-level comment-out so the gate cannot
+    # silently regress at upstream port time.
+    if require_approval:
+        reviews_resp = client.rest.pulls.list_reviews(owner, repo, pr_number)
+        reviews = list(reviews_resp.parsed_data or [])
+        has_approval = any(getattr(r, "state", "") == "APPROVED" for r in reviews)
+        if not has_approval:
+            failed.append("no-approval")
 
     head_sha = getattr(getattr(pr, "head", None), "sha", "")
     if head_sha:
@@ -582,7 +582,8 @@ def _handle_merge(
 
     # Step 5: at-enqueue gates (WF-02).
     failed_gates = _check_at_enqueue_gates(
-        client, owner, repo, pr_number, pr, queues
+        client, owner, repo, pr_number, pr, queues,
+        require_approval=config.require_approval_at_enqueue,
     )
     if failed_gates:
         body = (

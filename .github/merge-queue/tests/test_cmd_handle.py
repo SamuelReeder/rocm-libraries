@@ -307,20 +307,39 @@ class TestAtEnqueueGates:
         )
         assert fails == []
 
-    @pytest.mark.skip(
-        reason="DOGFOOD-ONLY: no-approval gate disabled in cmd_handle for "
-        "fork dogfood (single-collaborator). Re-enable + un-skip before "
-        "upstream porting (Phase 5 PORT-02 pre-flight)."
-    )
-    def test_fails_on_no_approval(
+    def test_fails_on_no_approval_when_gate_enabled(
         self, fake_client: FakeGitHub, fake_state: FakeRepoState
     ) -> None:
+        """Default ``require_approval=True`` enforces the RFC §5 gate."""
         _seed_pr(fake_state, reviews=[{"state": "COMMENTED"}])
         pr = fake_client.rest.pulls.get("o", "r", 7).parsed_data
         fails = cmd_handle._check_at_enqueue_gates(
             fake_client, "o", "r", 7, pr, queues=frozenset({"hipdnn"})
         )
         assert "no-approval" in fails
+
+    def test_no_approval_skipped_when_gate_disabled(
+        self, fake_client: FakeGitHub, fake_state: FakeRepoState
+    ) -> None:
+        """``require_approval=False`` (dogfood override) bypasses the gate.
+
+        PORT-02 closure: the config flag replaces a code-level comment-out so
+        the gate cannot silently regress at upstream port time. This test
+        pins the dogfood-disabled behavior against the flag, not against a
+        commented-out block.
+        """
+        _seed_pr(fake_state, reviews=[{"state": "COMMENTED"}])
+        pr = fake_client.rest.pulls.get("o", "r", 7).parsed_data
+        fails = cmd_handle._check_at_enqueue_gates(
+            fake_client,
+            "o",
+            "r",
+            7,
+            pr,
+            queues=frozenset({"hipdnn"}),
+            require_approval=False,
+        )
+        assert "no-approval" not in fails
 
     def test_fails_on_failing_required_check(
         self, fake_client: FakeGitHub, fake_state: FakeRepoState
@@ -744,11 +763,6 @@ class TestMainPermRejection:
 
 
 class TestMainGateFailures:
-    @pytest.mark.skip(
-        reason="DOGFOOD-ONLY: no-approval gate disabled in cmd_handle for "
-        "fork dogfood. Re-enable + un-skip before upstream porting "
-        "(Phase 5 PORT-02 pre-flight)."
-    )
     def test_no_approval_emits_single_rejection_comment(
         self,
         tmp_path: Path,

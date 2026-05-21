@@ -197,8 +197,22 @@ def build_config_from_develop(
     path_entries.sort(key=lambda pair: len(pair[0]), reverse=True)
 
     app_identity = resolve_app_identity(client)
+
+    # MQ_REQUIRE_APPROVAL env-var override (PORT-02 closure). Default True so
+    # upstream port inherits the RFC §5 contract; the fork-dogfood workflow
+    # sets MQ_REQUIRE_APPROVAL=0 (or false/no) to disable the gate. Any other
+    # value (including unset) keeps the default. Parsed here at the I/O
+    # boundary so the pure decision layer never reads the environment.
+    import os
+
+    require_approval = True
+    raw_val = os.environ.get("MQ_REQUIRE_APPROVAL", "").strip().lower()
+    if raw_val in {"0", "false", "no", "off"}:
+        require_approval = False
+
     return MergeQueueConfig(
         all_queues=queues,
         path_to_queues=tuple(path_entries),
         app_identity=app_identity,
+        require_approval_at_enqueue=require_approval,
     )

@@ -151,6 +151,13 @@ jobs:
           # MUST take this env-var-trust path here.
           MQ_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           MQ_APP_ID: ${{ vars.MQ_APP_ID }}
+          # DOGFOOD-ONLY: disable the at-enqueue ≥1-approval gate (RFC §5)
+          # because the fork has a single collaborator and PR authors cannot
+          # self-approve. Branch protection on develop still enforces the
+          # approval requirement at the squash-merge step. Default is True
+          # in MergeQueueConfig; the upstream-port pre-flight (PORT-02) is
+          # to remove this env override so the gate runs at enqueue too.
+          MQ_REQUIRE_APPROVAL: "0"
         run: python -m rocm_mq handle --repo ${{ github.repository }} --event-path "$GITHUB_EVENT_PATH"
 
   audit:

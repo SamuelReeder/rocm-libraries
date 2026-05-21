@@ -272,6 +272,11 @@ class MergeQueueConfig:
     queued_label: str = "mq:queued"
     active_label: str = "mq:active"
     label_prefix: str = "mq:"
+    # WF-02 at-enqueue ≥1-approval gate. RFC §5 requires this for upstream;
+    # the fork-dogfood phase overrides to False via env (MQ_REQUIRE_APPROVAL=0)
+    # because the fork has only one collaborator and PR authors cannot self-
+    # approve. PORT-02: must be True for upstream port (default already is).
+    require_approval_at_enqueue: bool = True
 
 
 # ---------------------------------------------------------------------------
