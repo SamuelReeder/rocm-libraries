@@ -131,13 +131,19 @@ def run_scenario(
     repo: str,
     output_dir: Path | None = None,
     poll_interval_s: float = 5.0,
-    settle_s: float = 30.0,
+    settle_s: float = 120.0,
 ) -> DogfoodResult:
     """Run DOG-04 end-to-end and emit per-run JSON.
 
     ``settle_s`` is the handler-settle wait (one sleep) BEFORE the three
-    idempotency assertions are collected. In unit tests the caller passes a
-    tiny value (or 0) via ``poll_interval_s=0`` to keep test runtime negligible.
+    idempotency assertions are collected. Live mq-handler runtime is
+    typically 60-90s (queue + checkout + setup-python + preflight + token
+    mint + handle); 120s gives a comfortable buffer. The prior 30s default
+    consistently timed out before the handler completed (live runs
+    2026-05-20 PR #31, #32, #33 produced all-zeros JSON despite the
+    handler eventually succeeding). In unit tests the caller passes
+    ``poll_interval_s=0`` to skip the sleep entirely (handler simulation
+    is synchronous in the fake).
 
     Returns the ``DogfoodResult`` instance written to disk.
     """
