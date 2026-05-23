@@ -146,12 +146,10 @@ def _render_merged(
     lines.append("")
     lines.append(f"Squashed to develop as `{render_ctx.merged_sha}`.")
     lines.append("")
-    # tree_diff_status=ahead is an invariant any successful squash must
-    # satisfy: the executor's post-squash verification raises
-    # CorruptSquashError unless compare_commits reports status='ahead' with
-    # a non-empty files list. Surfacing the sentinel here lets audit tooling
-    # confirm the silent-corruption check ran without parsing executor source.
-    lines.append("_tree_diff_status=ahead (compare_commits verified)._")
+    # tree_diff_status=ahead is a sentinel emitted by the executor's merged
+    # path after post-squash verification. Keep the renderer wording factual
+    # without claiming this pure function performed the compare_commits call.
+    lines.append("_tree_diff_status=ahead._")
     return "\n".join(lines)
 
 

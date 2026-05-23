@@ -4,8 +4,9 @@ rocm_mq — Federated Merge Queue.
 Every symbol listed in ``__all__`` is part of the stable public API.
 Adding symbols is backwards-compatible; removing is a breaking change.
 
-Symbols from ``_helpers`` are surfaced here for I/O-boundary callers — the
-leading underscore communicates "I/O-boundary use only, not user-facing".
+Selected functions implemented in ``_helpers`` are exported here intentionally:
+``_helpers`` is a private implementation module, while the names listed in
+``__all__`` below are stable public API.
 """
 
 from rocm_mq._helpers import (

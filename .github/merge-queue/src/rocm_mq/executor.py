@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, assert_never
 # This module imports githubkit; pure-layer modules must not.
 from githubkit.exception import RequestFailed
 
-from rocm_mq.comment import render_status_body
+from rocm_mq.comment import _STATUS_MARKER, render_status_body
 from rocm_mq.gh import CorruptSquashError
 from rocm_mq.state import (
     Action,
@@ -58,10 +58,6 @@ if TYPE_CHECKING:
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-# Must stay byte-identical to ``rocm_mq.comment._STATUS_MARKER`` — the renderer
-# embeds it in every comment body and ``_find_status_comment_id`` greps for the
-# exact substring; any drift breaks the upsert silently.
-_STATUS_MARKER = "<!-- rocm-mq-status -->"
 
 # Trunk branch per RFC §4.9 ("develop" by contract).
 _TRUNK_BRANCH = "develop"

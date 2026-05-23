@@ -79,7 +79,9 @@ def derive_pr(
     the PR to the back of the queue (correct FIFO semantics for re-enqueue).
 
     ``queues`` is derived from ``mq:<name>`` labels on the PR, EXCLUDING the two
-    state labels (``mq:queued`` and ``mq:active``).
+    state labels (``mq:queued`` and ``mq:active``). For already-labelled PRs,
+    the snapshot adapter may intentionally leave ``raw.changed_paths`` empty:
+    after enqueue, labels are the authoritative queue-membership source.
 
     ``is_validly_active`` requires BOTH the context filter (``status.context ==
     config.activation_status_context``) AND the creator filter
@@ -141,7 +143,9 @@ def derive_pr(
     # Case 1: Normal — use most recent App-applied event (max = re-enqueue wins)
     enqueued_at: datetime = max(e.created_at for e in app_queued_events)
 
-    # Derive queue membership from mq:<name> labels, excluding state labels
+    # Derive queue membership from mq:<name> labels, excluding state labels.
+    # Do not read raw.changed_paths here: build_snapshot may skip list_files
+    # for labelled PRs because labels are authoritative after enqueue.
     queues: frozenset[str] = frozenset(
         lbl[len(config.label_prefix) :]
         for lbl in raw.labels
