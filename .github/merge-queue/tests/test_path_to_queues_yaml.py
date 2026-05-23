@@ -1,9 +1,8 @@
 """Smoke tests for path_to_queues.yml.
 
 These are PARSE-LEVEL tripwires only: yaml.safe_load succeeds, the top-level
-shape matches the handler/processor's expectations, every queue named in a
-path entry exists in the queues list, and the dogfood-canary routing is
-present.
+shape matches the handler/processor's expectations, and every queue named in a
+path entry exists in the queues list.
 
 Full schema validation (graph-closure of upstream/downstream queue
 relationships, queue-name lexical rules, etc.) is a future follow-up — a
@@ -65,17 +64,12 @@ def test_top_level_keys(parsed: dict[str, object]) -> None:
     )
 
 
-def test_queues_is_list_of_seven_strings(parsed: dict[str, object]) -> None:
-    """`queues` is a list of length 7, all strings (six production + dogfood-canary)."""
+def test_queues_is_list_of_six_strings(parsed: dict[str, object]) -> None:
+    """`queues` is a list of length 6, all production queue names."""
     queues = parsed["queues"]
     assert isinstance(queues, list)
-    assert len(queues) == 7, f"Expected 7 queues, got {len(queues)}: {queues}"
+    assert len(queues) == 6, f"Expected 6 queues, got {len(queues)}: {queues}"
     assert all(isinstance(q, str) for q in queues), f"Non-string queue entry in {queues}"
-
-
-def test_dogfood_canary_present(parsed: dict[str, object]) -> None:
-    """The synthetic `dogfood-canary` queue is in the queues list."""
-    assert "dogfood-canary" in parsed["queues"]
 
 
 def test_no_required_checks_section(parsed: dict[str, object]) -> None:
@@ -100,20 +94,6 @@ def test_paths_reference_only_known_queues(parsed: dict[str, object]) -> None:
         )
 
 
-def test_dogfood_path_routes_to_canary_only(parsed: dict[str, object]) -> None:
-    """A paths entry exists whose path starts with `dogfood/` and routes ONLY to dogfood-canary.
-
-    This guarantees the canary's required check never affects opted-in
-    real-code paths — dogfood-canary is the ONLY non-real-code queue.
-    """
-    matching = [
-        e for e in parsed["paths"]
-        if isinstance(e.get("path"), str) and e["path"].startswith("dogfood/")
-    ]
-    assert matching, "No paths entry starting with 'dogfood/' found"
-    assert any(e["queues"] == ["dogfood-canary"] for e in matching), (
-        f"Expected a dogfood/* entry with queues == ['dogfood-canary']; got {matching}"
-    )
 
 
 def test_production_queues_present(parsed: dict[str, object]) -> None:

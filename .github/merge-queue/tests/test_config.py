@@ -2,7 +2,7 @@
 and App-identity env-var names.
 
 Covers:
-- SELF_BOOTSTRAP_PATHS: type (tuple of str), membership of the four required
+- SELF_BOOTSTRAP_PATHS: type (tuple of str), membership of the required
   globs (RFC §8 self-bootstrap protection), and the documented future-slot
   comment for ``terraform/github/**``.
 - load_from_develop: happy path (Contents API + base64 + safe_load returns
@@ -47,11 +47,10 @@ def test_self_bootstrap_paths_is_immutable_tuple() -> None:
         ".github/workflows/**",
         ".github/merge-queue/**",
         ".github/merge-queue/path_to_queues.yml",
-        ".github/workflows/mq-dogfood-canary.yml",
     ],
 )
 def test_self_bootstrap_paths_contains_required_globs(required_glob: str) -> None:
-    """RFC §8 self-bootstrap protection: four globs MUST be present today."""
+    """RFC §8 self-bootstrap protection: required globs MUST be present today."""
     assert required_glob in SELF_BOOTSTRAP_PATHS
 
 
@@ -180,12 +179,10 @@ def test_app_id_env_constant() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_config_from_develop__parses_seven_queue_yaml(
+def test_build_config_from_develop__parses_six_queue_yaml(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Real-shape path_to_queues.yml (7 queues, 6 path entries) maps to a
-    MergeQueueConfig with all_queues + path_to_queues populated correctly.
-    """
+    """Real-shape path_to_queues.yml maps to a MergeQueueConfig."""
     from rocm_mq.config import build_config_from_develop
     from rocm_mq.state import AppIdentity
 
@@ -201,7 +198,6 @@ queues:
   - hip-kernel-provider
   - fusilli-provider
   - integration-tests
-  - dogfood-canary
 paths:
   - path: projects/hipdnn/
     queues: [hipdnn]
@@ -215,8 +211,6 @@ paths:
     queues: [fusilli-provider]
   - path: dnn-providers/integration-tests/
     queues: [integration-tests]
-  - path: dogfood/
-    queues: [dogfood-canary]
 """
     _seed_contents(
         fake, path=".github/merge-queue/path_to_queues.yml",
@@ -233,9 +227,8 @@ paths:
     assert set(config.all_queues) == {
         "hipdnn", "miopen-provider", "hipblaslt-provider",
         "hip-kernel-provider", "fusilli-provider", "integration-tests",
-        "dogfood-canary",
     }
-    assert len(config.path_to_queues) == 7
+    assert len(config.path_to_queues) == 6
     # Longest-prefix-first sort: dnn-providers/hip-kernel-provider/ (38 chars)
     # comes before projects/hipdnn/ (17 chars).
     path_strings = [p for p, _ in config.path_to_queues]

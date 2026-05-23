@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import githubkit.exception as _ghkit_exc  # noqa: F401
+
 from rocm_mq._helpers import parse_gh_timestamp
 from rocm_mq.state import (
     CommitStatus,
@@ -35,11 +37,14 @@ if TYPE_CHECKING:
     # TYPE_CHECKING so the linter does not flag it as unused at runtime.
     from rocm_mq.gh import GitHubClient
 
-# This module imports githubkit; pure-layer modules must not. The exception
-# type is used for narrow except clauses elsewhere in the I/O layer.
-import githubkit.exception as _ghkit_exc  # noqa: F401
 
 # ---------------------------------------------------------------------------
+# Cycle-abort exceptions
+# ---------------------------------------------------------------------------
+class SnapshotIncompleteError(RuntimeError):
+    """Search results were incomplete/truncated; abort this processor cycle."""
+
+
 # Creator bridging
 # ---------------------------------------------------------------------------
 
@@ -214,8 +219,9 @@ def build_snapshot(
         RawSnapshot — frozen tuple of RawPRState, one per unique PR.
 
     Raises:
-        AssertionError: if ``incomplete_results=True`` on any search page —
-            the cycle MUST abort and let the next 3-min cron tick retry.
+        SnapshotIncompleteError: if GitHub search results are incomplete or
+            exceed the single-page limit — the cycle MUST abort and let the
+            next 3-min cron tick retry.
     """
     # ------------------------------------------------------------------
     # Step 1 + 2 — search and deduplicate PR numbers across queues.
@@ -234,17 +240,19 @@ def build_snapshot(
         # queue ever exceeds 100 PRs.
         resp = client.rest.search.issues_and_pull_requests(q=q, per_page=100)
         data = resp.parsed_data
-        assert not getattr(data, "incomplete_results", False), (
-            f"search returned incomplete_results=True for queue={queue!r}; "
-            "aborting cycle (the next 3-min cron tick retries — RFC §4.6)"
-        )
+        if getattr(data, "incomplete_results", False):
+            raise SnapshotIncompleteError(
+                f"search returned incomplete_results=True for queue={queue!r}; "
+                "aborting cycle (the next 3-min cron tick retries — RFC §4.6)"
+            )
         items = list(getattr(data, "items", []) or [])
         total_count = int(getattr(data, "total_count", len(items)) or len(items))
-        assert total_count <= len(items), (
-            f"search for queue={queue!r} returned total_count={total_count} "
-            f"but only {len(items)} items fit in per_page=100; pagination "
-            "is required. Aborting cycle."
-        )
+        if total_count > len(items):
+            raise SnapshotIncompleteError(
+                f"search for queue={queue!r} returned total_count={total_count} "
+                f"but only {len(items)} items fit in per_page=100; pagination "
+                "is required. Aborting cycle."
+            )
         for item in items:
             number = int(item.number)
             if number in seen:

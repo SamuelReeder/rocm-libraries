@@ -55,6 +55,20 @@ _CMD_RE: re.Pattern[str] = re.compile(r"^/(merge|dequeue)\s*$")
 # always eligible regardless of role (live override in ``_check_perm``).
 _ELIGIBLE_ROLES: frozenset[str] = frozenset({"admin", "maintain", "write"})
 
+# At-enqueue known-bad check-run conclusions. Pending and not-yet-reported
+# checks are allowed because activation re-runs CI; terminal bad conclusions
+# would only burn a full queue cycle before branch protection rejects squash.
+_FAILING_CHECK_RUN_CONCLUSIONS: frozenset[str] = frozenset(
+    {
+        "failure",
+        "timed_out",
+        "cancelled",
+        "action_required",
+        "startup_failure",
+        "stale",
+    }
+)
+
 # RFC §4.3 label-name conventions. Mirror ``MergeQueueConfig`` defaults but
 # kept as module constants because the idempotency short-circuit runs
 # BEFORE the config load.
@@ -182,8 +196,9 @@ def _check_at_enqueue_gates(
          note below.
       3. ``no-approval`` — ``pulls.list_reviews`` carries zero entries
          whose ``state == "APPROVED"`` (RFC §5: required review state).
-      4. ``failing-required-check`` — ``get_combined_status_for_ref`` for
-         the PR head SHA reports any context in {"failure", "error"}.
+      4. ``failing-required-check`` — legacy commit statuses report any
+         context in {"failure", "error"}, or check-runs report a terminal
+         bad conclusion.
     """
     failed: list[str] = []
 
@@ -208,7 +223,7 @@ def _check_at_enqueue_gates(
         and base_repo_id is not None
         and head_repo_id != base_repo_id
     )
-    if is_cross_repo and not getattr(pr, "maintainer_can_modify", True):
+    if is_cross_repo and not getattr(pr, "maintainer_can_modify", False):
         failed.append("maintainer-edits-disabled")
 
     # No-approval gate (RFC §5). Behavior is config-toggled via
@@ -229,7 +244,17 @@ def _check_at_enqueue_gates(
             owner, repo, head_sha
         )
         per_context = list(getattr(status_resp.parsed_data, "statuses", []) or [])
-        if any(getattr(s, "state", "") in {"failure", "error"} for s in per_context):
+        failing_required_check = any(
+            getattr(s, "state", "") in {"failure", "error"} for s in per_context
+        )
+
+        checks_resp = client.rest.checks.list_for_ref(owner, repo, head_sha)
+        check_runs = list(getattr(checks_resp.parsed_data, "check_runs", []) or [])
+        failing_required_check = failing_required_check or any(
+            getattr(run, "conclusion", None) in _FAILING_CHECK_RUN_CONCLUSIONS
+            for run in check_runs
+        )
+        if failing_required_check:
             failed.append("failing-required-check")
 
     return failed

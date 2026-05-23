@@ -51,10 +51,9 @@ if TYPE_CHECKING:
 SELF_BOOTSTRAP_PATHS: Final[tuple[str, ...]] = (
     ".github/workflows/**",
     ".github/merge-queue/**",
-    # Explicit entries even though covered by the ** globs above — keeping
-    # them visible survives a future refactor that narrows the ** globs.
+    # Explicit even though covered by the ** glob above — keeping it visible
+    # survives a future refactor that narrows the ** glob.
     ".github/merge-queue/path_to_queues.yml",
-    ".github/workflows/mq-dogfood-canary.yml",
     # Add paths here if branch-protection-as-code tooling is adopted
     # (e.g. terraform/github/**).
 )

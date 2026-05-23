@@ -25,6 +25,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from rocm_mq.snapshot import (
+    SnapshotIncompleteError,
     _make_raw_pr_state,
     _make_status_creator,
     build_snapshot,
@@ -309,7 +310,7 @@ def test_build_snapshot__incomplete_results_raises() -> None:
     search_data = SimpleNamespace(incomplete_results=True, items=[])
     client.rest.search.issues_and_pull_requests.return_value = _resp(search_data)
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(SnapshotIncompleteError):
         build_snapshot(client, config, owner="SamuelReeder", repo="rocm-libraries")
 
 
@@ -360,7 +361,7 @@ def test_build_snapshot__search_total_count_exceeds_items__raises() -> None:
     )
     client.rest.search.issues_and_pull_requests.return_value = _resp(search_data)
 
-    with pytest.raises(AssertionError, match="pagination is required"):
+    with pytest.raises(SnapshotIncompleteError, match="pagination is required"):
         build_snapshot(client, config, owner="SamuelReeder", repo="rocm-libraries")
 
 

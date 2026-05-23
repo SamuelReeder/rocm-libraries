@@ -10,12 +10,6 @@
 # maintainer merge (RFC §8 self-bootstrap protection).
 #
 # Scope (RFC §4.1 v1): hipDNN core + four providers + integration-tests.
-# Plus one synthetic `dogfood-canary` queue gated to `dogfood/**` paths so
-# DOG-03's deterministic CI-fail signal exercises required-check semantics
-# without polluting real-code routing. Phase 5 porting-prep STRIPS the
-# dogfood-canary queue + the dogfood/ path entry + the dogfood-canary
-# required_checks entry for the upstream-bound config (CONTEXT.md
-# `<specifics>`).
 #
 # Required-check context names verified live against fork PR #21 head SHA
 # 04070ca96b77e75d180f09dd673e4c343260a8c6 (plan 03-03 Task 2):
@@ -35,8 +29,6 @@ queues:
   - hip-kernel-provider
   - fusilli-provider
   - integration-tests
-  # SYNTHETIC — Phase 5 porting-prep strips this for upstream (RFC §4.1 v1 scope is hipDNN ecosystem only)
-  - dogfood-canary
 
 paths:
   # hipDNN core change → blocks everything downstream (all five providers + integration-tests).
@@ -68,13 +60,6 @@ paths:
       - fusilli-provider
       - integration-tests
 
-  # SYNTHETIC — Phase 5 porting-prep strips this for upstream.
-  # Dedicated path for the DOG-03 dogfood canary; the canary workflow
-  # (mq-dogfood-canary.yml, plan 03-09) triggers on `paths: ['dogfood/**']`
-  # and reads the PR title for the literal `[dogfood-ci-fail]` to decide
-  # exit 0 vs exit 1.
-  - path: dogfood/
-    queues: [dogfood-canary]
 
 # `required_checks` section removed per 03-wr-09 design refactor: branch
 # protection is now the single source of truth for which checks gate a

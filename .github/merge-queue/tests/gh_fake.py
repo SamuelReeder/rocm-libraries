@@ -91,6 +91,8 @@ class FakeRepoState:
     """Maps username → role_name (admin|maintain|write|triage|read|none)."""
     combined_statuses: dict[str, dict[str, Any]] = field(default_factory=dict)
     """Maps head_sha → {state: success|pending|failure, statuses: [{context, state}, ...]}."""
+    check_runs: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    """Maps head_sha → check-run dicts {name, status, conclusion}; Actions checks."""
     reactions_log: list[tuple[int, str]] = field(default_factory=list)
     """Append-only (comment_id, reaction_content) tuples."""
     comments_store: dict[int, dict[int, str]] = field(default_factory=dict)
@@ -194,6 +196,7 @@ class _ReposNS:
         *,
         state: str,
         context: str,
+        description: str | None = None,
         **_: Any,
     ) -> SimpleNamespace:
         """Semantic 1: (sha, context) overwrite. Second write replaces first."""
@@ -204,6 +207,7 @@ class _ReposNS:
             "sha": sha,
             "created_at": f"2026-04-22T15:00:{self._state.next_status_seq:02d}Z",
             "creator_type": self._creator_type,
+            "description": description,
         }
         return _resp(SimpleNamespace(sha=sha, context=context, state=state))
 
@@ -656,8 +660,15 @@ class _ChecksNS:
         self._state = state
 
     def list_for_ref(self, owner: str, repo: str, ref: str) -> SimpleNamespace:
-        # Fake tests do not exercise check-run detail; return empty.
-        return _resp(SimpleNamespace(total_count=0, check_runs=[]))
+        runs = [
+            SimpleNamespace(
+                name=r.get("name", "check"),
+                status=r.get("status", "completed"),
+                conclusion=r.get("conclusion"),
+            )
+            for r in self._state.check_runs.get(ref, [])
+        ]
+        return _resp(SimpleNamespace(total_count=len(runs), check_runs=runs))
 
 
 class _AppsNS:

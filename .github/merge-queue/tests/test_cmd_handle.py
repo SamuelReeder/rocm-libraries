@@ -120,6 +120,7 @@ def _seed_pr(
     reviews: list[dict[str, str]] | None = None,
     combined_status: str = "success",
     combined_statuses: list[dict[str, str]] | None = None,
+    check_runs: list[dict[str, str | None]] | None = None,
     is_cross_repo: bool = False,
 ) -> FakePR:
     pr = FakePR(
@@ -138,6 +139,7 @@ def _seed_pr(
         "state": combined_status,
         "statuses": combined_statuses or [],
     }
+    state.check_runs[head_sha] = check_runs or []
     return pr
 
 
@@ -356,6 +358,45 @@ class TestAtEnqueueGates:
         )
         assert "failing-required-check" in fails
 
+    def test_fails_on_failing_check_run(
+        self, fake_client: FakeGitHub, fake_state: FakeRepoState
+    ) -> None:
+        _seed_pr(
+            fake_state,
+            combined_statuses=[],
+            check_runs=[
+                {
+                    "name": "TheRock CI Summary",
+                    "status": "completed",
+                    "conclusion": "failure",
+                }
+            ],
+        )
+        pr = fake_client.rest.pulls.get("o", "r", 7).parsed_data
+        fails = cmd_handle._check_at_enqueue_gates(
+            fake_client, "o", "r", 7, pr, queues=frozenset({"hipdnn"})
+        )
+        assert "failing-required-check" in fails
+
+    def test_pending_check_run_is_allowed(
+        self, fake_client: FakeGitHub, fake_state: FakeRepoState
+    ) -> None:
+        _seed_pr(
+            fake_state,
+            check_runs=[
+                {
+                    "name": "TheRock CI Summary",
+                    "status": "in_progress",
+                    "conclusion": None,
+                }
+            ],
+        )
+        pr = fake_client.rest.pulls.get("o", "r", 7).parsed_data
+        fails = cmd_handle._check_at_enqueue_gates(
+            fake_client, "o", "r", 7, pr, queues=frozenset({"hipdnn"})
+        )
+        assert "failing-required-check" not in fails
+
     def test_fails_on_maintainer_edits_disabled(
         self, fake_client: FakeGitHub, fake_state: FakeRepoState
     ) -> None:
@@ -365,6 +406,17 @@ class TestAtEnqueueGates:
         # GitHub but the field has no real meaning there.
         _seed_pr(fake_state, maintainer_can_modify=False, is_cross_repo=True)
         pr = fake_client.rest.pulls.get("o", "r", 7).parsed_data
+        fails = cmd_handle._check_at_enqueue_gates(
+            fake_client, "o", "r", 7, pr, queues=frozenset({"hipdnn"})
+        )
+        assert "maintainer-edits-disabled" in fails
+
+    def test_cross_repo_pr_missing_maintainer_edits_field_fails_closed(
+        self, fake_client: FakeGitHub, fake_state: FakeRepoState
+    ) -> None:
+        _seed_pr(fake_state, is_cross_repo=True)
+        pr = fake_client.rest.pulls.get("o", "r", 7).parsed_data
+        delattr(pr, "maintainer_can_modify")
         fails = cmd_handle._check_at_enqueue_gates(
             fake_client, "o", "r", 7, pr, queues=frozenset({"hipdnn"})
         )

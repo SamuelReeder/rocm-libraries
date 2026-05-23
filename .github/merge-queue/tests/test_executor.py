@@ -77,6 +77,20 @@ def _make_pr_state(
     )
 
 
+def _make_active_pr_state(
+    *,
+    number: int = 42,
+    head_sha: str = "head_sha_aaa",
+) -> PRState:
+    return _make_pr_state(
+        number=number,
+        head_sha=head_sha,
+        labels=frozenset({"mq:active", "mq:miopen-provider"}),
+        queues=frozenset({"miopen-provider"}),
+        is_validly_active=True,
+    )
+
+
 def _make_fake_pulls_get_response(
     head_sha: str, head_ref: str = "feature-branch"
 ) -> SimpleNamespace:
@@ -153,6 +167,24 @@ def _patch_repos_get_branch(
         )
 
     fake.rest.repos.get_branch = get_branch  # type: ignore[attr-defined]
+
+
+def _seed_valid_activation(
+    fake: FakeGitHub,
+    config: Any,
+    *,
+    number: int = 42,
+    head_sha: str = "head_sha_aaa",
+) -> PRState:
+    fake.state.prs[number].labels = {"mq:active", "mq:miopen-provider"}
+    fake.rest.repos.create_commit_status(
+        "org",
+        "repo",
+        head_sha,
+        state="success",
+        context=config.activation_status_context,
+    )
+    return _make_active_pr_state(number=number, head_sha=head_sha)
 
 
 # ---------------------------------------------------------------------------
@@ -377,8 +409,8 @@ def test_activate__repos_merge_204__uses_current_head_sha() -> None:
 def test_activate__repos_merge_409__ejects_with_documented_reason() -> None:
     """409 conflict on develop→PR merge → eject with 'merge conflict with develop'.
 
-    The eject path stamps a failure activation status, clears any mq:*
-    labels (none in this fixture), and posts a status comment naming the
+    The eject path stamps an error activation status, clears any mq:*
+    labels, and posts a status comment naming the
     documented reason so external observers can match on it.
     """
     from rocm_mq import executor
@@ -405,10 +437,11 @@ def test_activate__repos_merge_409__ejects_with_documented_reason() -> None:
     assert outcome.success is False
     assert isinstance(outcome.action, Eject)
     assert outcome.action.reason == "merge conflict with develop"
-    # Eject path stamps a failure activation status on the head SHA.
+    # Eject path stamps an error activation status on the head SHA.
     key = ("head_sha_aaa", config.activation_status_context)
     assert key in fake.state.status_store
-    assert fake.state.status_store[key]["state"] == "failure"
+    assert fake.state.status_store[key]["state"] == "error"
+    assert fake.state.status_store[key]["description"] == "ejected"
     # No mq:active label flipped (eject path only removes mq:* labels, never adds).
     assert "mq:active" not in fake.state.prs[42].labels
     # Eject posts a status comment naming the documented reason.
@@ -456,18 +489,15 @@ def test_activate__pre_stamp_race__author_pushed_between_merge_and_stamp() -> No
     assert not fake.state.status_store
 
 
-def test_activate__label_add_failure__no_status_stamped(monkeypatch: pytest.MonkeyPatch) -> None:
-    """regression guard: a failed stamp must leave the PR re-activatable next cycle.
+def test_activate__label_add_failure__status_is_safe_while_pr_remains_queued(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A label-flip failure must not make a queued PR squashable.
 
-    With the previous stamp-then-flip order, a label-flip failure left the App's
-    success status posted on the merged SHA while the labels still said queued.
-    The decision layer's is_validly_active check binds activation to that
-    status (RFC §4.9), so the next cycle could schedule a Squash while humans
-    saw mq:queued unchanged — split-brain.
-
-    Fix: the handler now flips labels FIRST and stamps LAST, so any
-    add_labels failure aborts before any status is posted. The next cycle
-    re-runs Activate (merge is 204 no-op; add_labels is idempotent).
+    Activation now stamps first, then flips labels. If the label add fails,
+    the PR remains mq:queued and lacks mq:active; the next cycle emits
+    Activate again rather than Squash even though the activation status is
+    present on the head SHA.
     """
     from rocm_mq import executor
 
@@ -491,17 +521,42 @@ def test_activate__label_add_failure__no_status_stamped(monkeypatch: pytest.Monk
             repo="repo",
         )
 
-    # The critical assertion: no activation status was posted on ANY sha.
-    # The previous order (stamp → flip) would have already populated
-    # status_store with the merged SHA + activation context BEFORE the
-    # add_labels failure propagated.
-    assert not fake.state.status_store, (
-        "regression: activation status was stamped despite add_labels failure"
-    )
+    key = (fake.state.prs[42].head_sha, config.activation_status_context)
+    assert fake.state.status_store[key]["state"] == "success"
+    assert fake.state.prs[42].labels == {"mq:queued", "mq:miopen-provider"}
+
+
+def test_activate__stamp_failure_leaves_labels_queued(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed activation status write must not flip labels to mq:active."""
+    from rocm_mq import executor
+
+    fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
+    _patch_pulls_get_to_return_branch(fake, head_ref="feature-branch")
+    _patch_repos_merge_to_advance_pr_head(fake, 42)
+    config = canonical_merge_queue_config()
+    pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
+
+    def boom_create_status(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        raise RuntimeError("simulated network blip during create_commit_status")
+
+    monkeypatch.setattr(fake.rest.repos, "create_commit_status", boom_create_status)
+
+    with pytest.raises(RuntimeError, match="create_commit_status"):
+        executor.dispatch(
+            Activate(pr=pr),
+            client=fake,
+            config=config,
+            owner="org",
+            repo="repo",
+        )
+
+    assert fake.state.prs[42].labels == {"mq:queued", "mq:miopen-provider"}
 
 
 def test_activate__pre_stamp_race__204_path__author_pushed_between_reads() -> None:
-    """regression guard: stamp must follow label flip (race check on 204 path).
+    """regression guard: race check runs on 204 path before the stamp.
 
     On the 204 ("already up-to-date") path the handler calls pulls.get twice:
     once to capture the post-merge head SHA (used as the SHA to stamp), and
@@ -634,7 +689,7 @@ def test_idempotency__squash_already_merged__405_treated_as_noop() -> None:
     fake.state.prs[42].merged = True  # second call → 405
     _patch_repos_get_branch(fake)
     config = canonical_merge_queue_config()
-    pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
+    pr = _seed_valid_activation(fake, config)
 
     outcome = executor.dispatch(
         Squash(pr=pr), client=fake, config=config, owner="org", repo="repo"
@@ -644,6 +699,54 @@ def test_idempotency__squash_already_merged__405_treated_as_noop() -> None:
     # error_message documents the no-op.
     assert outcome.error_message is not None
     assert "merged" in outcome.error_message.lower()
+
+
+def test_handle_squash__success_cleans_labels_and_marks_merged() -> None:
+    """Successful squash clears mq:* labels and terminalizes activation status."""
+    from rocm_mq import executor
+
+    fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
+    _patch_repos_get_branch(fake)
+    config = canonical_merge_queue_config()
+    pr = _seed_valid_activation(fake, config)
+
+    outcome = executor.dispatch(
+        Squash(pr=pr), client=fake, config=config, owner="org", repo="repo"
+    )
+
+    assert outcome.success is True
+    remaining = fake.state.prs[42].labels
+    assert not any(label.startswith("mq:") for label in remaining)
+    entry = fake.state.status_store[("head_sha_aaa", config.activation_status_context)]
+    assert entry["state"] == "success"
+    assert entry["description"] == "merged"
+    comments = fake.state.comments_store.get(42, {})
+    assert any("Squashed to develop" in body for body in comments.values())
+
+
+def test_handle_squash__preflight_label_tamper_ejects_without_merge() -> None:
+    """A stale processor snapshot must not squash after mq:* label tamper."""
+    from rocm_mq import executor
+
+    fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
+    _patch_repos_get_branch(fake)
+    config = canonical_merge_queue_config()
+    pr = _seed_valid_activation(fake, config)
+    fake.state.prs[42].labels.discard("mq:active")
+
+    def should_not_merge(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        raise AssertionError("pulls.merge must not run after preflight tamper")
+
+    fake.rest.pulls.merge = should_not_merge  # type: ignore[assignment]
+
+    outcome = executor.dispatch(
+        Squash(pr=pr), client=fake, config=config, owner="org", repo="repo"
+    )
+
+    assert outcome.success is False
+    assert isinstance(outcome.action, Eject)
+    assert fake.state.prs[42].merged is False
+    assert not any(label.startswith("mq:") for label in fake.state.prs[42].labels)
 
 
 def test_idempotency__status_overwrite__no_error_on_second_post() -> None:
@@ -1113,7 +1216,7 @@ def test_handle_squash__verify_failure__returns_failure_outcome(
     fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
     _patch_repos_get_branch(fake)  # captures pre-squash develop tip
     config = canonical_merge_queue_config()
-    pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
+    pr = _seed_valid_activation(fake, config)
 
     # Sabotage post-squash get_commit so parents[0] is wrong (silent corruption).
     def corrupted_get_commit(owner: str, repo: str, ref: str) -> SimpleNamespace:
@@ -1162,7 +1265,7 @@ def test_handle_squash__phase_b_failure__returns_failure_outcome(
     fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
     _patch_repos_get_branch(fake)  # captures pre-squash develop tip
     config = canonical_merge_queue_config()
-    pr = _make_pr_state(number=42, head_sha="head_sha_aaa")
+    pr = _seed_valid_activation(fake, config)
 
     # Override compare_commits to return the literal Apr-2026 silent-corruption
     # shape (status='identical', files=[]). Phase A still passes through the
@@ -1326,8 +1429,8 @@ def test_update_comment__existing_comment__updates_in_place(
 # ---------------------------------------------------------------------------
 
 
-def test_eject__overwrites_status_to_failure_and_cleans_mq_labels() -> None:
-    """Eject stamps merge-queue/active=failure and removes all mq:* labels."""
+def test_eject__overwrites_status_to_error_and_cleans_mq_labels() -> None:
+    """Eject stamps merge-queue/active=error and removes all mq:* labels."""
     from rocm_mq import executor
 
     fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
@@ -1349,9 +1452,10 @@ def test_eject__overwrites_status_to_failure_and_cleans_mq_labels() -> None:
     )
 
     assert outcome.success is True
-    # Status: failure on the PR's head SHA, with the activation context.
+    # Status: error on the PR's head SHA, with the activation context.
     entry = fake.state.status_store[("head_sha_aaa", config.activation_status_context)]
-    assert entry["state"] == "failure"
+    assert entry["state"] == "error"
+    assert entry["description"] == "ejected"
     # All mq:* labels removed; non-mq labels preserved.
     remaining = fake.state.prs[42].labels
     assert "needs-review" in remaining

@@ -29,12 +29,11 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, assert_never
 
 # This module imports githubkit; pure-layer modules must not.
 from githubkit.exception import RequestFailed
-
-from datetime import UTC, datetime
 
 from rocm_mq.comment import render_status_body
 from rocm_mq.gh import CorruptSquashError
@@ -184,27 +183,12 @@ def _handle_activate(
             ),
         )
 
-    # Step 3: label flip before stamp. A failed stamp leaves the PR without
-    # an activation status, so the next cycle re-activates from a clean state
-    # — add_labels is idempotent (set semantics) and _safe_remove_label
-    # swallows 404. The reverse order (stamp → flip) would split-brain the PR
-    # on any label-call failure (status=active while labels=queued), and the
-    # decision layer would then schedule a Squash for a PR whose human-visible
-    # state was still in-queue.
-    client.rest.issues.add_labels(
-        owner,
-        repo,
-        pr.number,
-        data=[config.active_label],
-    )
-    _safe_remove_label(client, owner, repo, pr.number, config.queued_label)
-
-    # Step 4: stamp the activation status last — this is the commit point.
-    # Posting the App's own success status is what binds activation per
-    # RFC §4.9. If this call raises, the labels are already flipped but no
-    # activation evidence exists; the next cycle's derive_pr will not
-    # classify the PR as validly active and will re-Activate (the merge is
-    # a 204 no-op, the label adds are idempotent, and this stamp is retried).
+    # Step 3: stamp the activation status before flipping labels. A failed
+    # status write leaves the PR labelled mq:queued, so the next cycle
+    # re-runs Activate from a re-derivable state. A failed label flip after
+    # the stamp is also safe: the decision layer only evaluates/squashes PRs
+    # that carry mq:active, so a queued PR with a pre-existing activation
+    # status is re-activated rather than merged.
     client.rest.repos.create_commit_status(
         owner,
         repo,
@@ -212,6 +196,15 @@ def _handle_activate(
         state="success",
         context=config.activation_status_context,
     )
+
+    # Step 4: label flip is the visible commit point.
+    client.rest.issues.add_labels(
+        owner,
+        repo,
+        pr.number,
+        data=[config.active_label],
+    )
+    _safe_remove_label(client, owner, repo, pr.number, config.queued_label)
 
     return ActionOutcome(action=action, success=True, error_message=None)
 
@@ -246,6 +239,12 @@ def _handle_squash(
     # commit after — see ``_verify_squash``.
     pre_squash_develop_sha = _read_branch_tip(client, owner, repo, _TRUNK_BRANCH)
 
+    revalidation_failure = _revalidate_before_squash(
+        pr, client, config, owner, repo
+    )
+    if revalidation_failure is not None:
+        return revalidation_failure
+
     # Squash-merge. GitHub returns various 4xx codes when the merge is not
     # currently permitted; _handle_squash_failure translates them.
     try:
@@ -274,6 +273,20 @@ def _handle_squash(
     except CorruptSquashError as exc:
         return ActionOutcome(action=action, success=False, error_message=str(exc))
 
+    # Terminal cleanup: clear queue labels and overwrite the activation
+    # marker for human-readable status pages. The closed PR would disappear
+    # from `is:open` discovery anyway, but clearing labels is the RFC §4.5
+    # lifecycle contract and prevents stale labels on close/reopen.
+    client.rest.repos.create_commit_status(
+        owner,
+        repo,
+        pr.head_sha,
+        state="success",
+        context=config.activation_status_context,
+        description="merged",
+    )
+    _clear_mq_labels(pr, client, config, owner, repo)
+
     # Update the status comment to reflect the merged state so PR readers see
     # the final outcome without having to inspect the activation status or
     # cycle summary.
@@ -288,6 +301,90 @@ def _handle_squash(
     )
 
     return ActionOutcome(action=action, success=True, error_message=None)
+
+def _revalidate_before_squash(
+    pr: PRState,
+    client: GitHubClient,
+    config: MergeQueueConfig,
+    owner: str,
+    repo: str,
+) -> ActionOutcome | None:
+    """Re-read tamper-sensitive PR state immediately before squash.
+
+    The processor snapshot can become stale while a same-PR audit job clears
+    labels or an author pushes a new head. Branch protection catches some
+    stale-read cases, but queue-state tampering is represented by labels and
+    the App-created activation status, so verify those canonical surfaces
+    directly before `pulls.merge`.
+    """
+    current = _read_pr(client, owner, repo, pr.number)
+    current_labels = frozenset(
+        str(getattr(label, "name", "")) for label in getattr(current, "labels", [])
+    )
+    current_head = str(getattr(getattr(current, "head", None), "sha", ""))
+    current_pr = PRState(
+        number=pr.number,
+        head_sha=current_head,
+        labels=current_labels,
+        queues=pr.queues,
+        enqueued_at=pr.enqueued_at,
+        is_validly_active=False,
+    )
+
+    expected_queue_labels = frozenset(
+        f"{config.label_prefix}{queue}" for queue in pr.queues
+    )
+    state_drifted = (
+        current_head != pr.head_sha
+        or config.active_label not in current_labels
+        or config.queued_label in current_labels
+        or not expected_queue_labels.issubset(current_labels)
+        or not _head_has_app_activation_status(
+            client, config, owner, repo, current_head
+        )
+    )
+    if not state_drifted:
+        return None
+
+    reason = "activation invalid (branch updated or label tampered)"
+
+    _handle_eject(current_pr, reason, client, config, owner, repo)
+    return ActionOutcome(
+        action=Eject(pr=current_pr, reason=reason),
+        success=False,
+        error_message=f"squash preflight failed → ejected: {reason}",
+    )
+
+
+def _head_has_app_activation_status(
+    client: GitHubClient,
+    config: MergeQueueConfig,
+    owner: str,
+    repo: str,
+    head_sha: str,
+) -> bool:
+    statuses_resp = client.rest.repos.list_commit_statuses_for_ref(
+        owner, repo, head_sha
+    )
+    statuses = list(statuses_resp.parsed_data or [])
+    expected_login = f"{config.app_identity.slug}[bot]"
+    for status in statuses:
+        if str(getattr(status, "context", "")) != config.activation_status_context:
+            continue
+        creator = getattr(status, "creator", None)
+        if creator is None:
+            continue
+        if str(getattr(creator, "type", "")) != "Bot":
+            continue
+        if str(getattr(creator, "login", "")) != expected_login:
+            continue
+        creator_id = getattr(creator, "id", None)
+        if creator_id is not None and int(creator_id) != config.app_identity.bot_user_id:
+            continue
+        return True
+    return False
+
+
 
 
 def _handle_squash_failure(
@@ -489,7 +586,7 @@ def _handle_eject(
     owner: str,
     repo: str,
 ) -> ActionOutcome:
-    """Overwrite the activation status to ``failure`` and clear mq:* labels.
+    """Overwrite the activation status to ``error`` and clear mq:* labels.
 
     Idempotent: status overwrite is unconditional; label removals are wrapped
     in ``_safe_remove_label`` so a previously-removed label does not abort the
@@ -500,20 +597,17 @@ def _handle_eject(
     """
     action = Eject(pr=pr, reason=reason)
 
-    # Overwrite the activation status to failure on the PR's head SHA.
+    # Overwrite the activation status to error on the PR's head SHA.
     client.rest.repos.create_commit_status(
         owner,
         repo,
         pr.head_sha,
-        state="failure",
+        state="error",
         context=config.activation_status_context,
+        description="ejected",
     )
 
-    # Remove all mq:* labels. Iterate over a snapshot so we don't mutate the
-    # frozenset during iteration.
-    for label in pr.labels:
-        if label.startswith(config.label_prefix):
-            _safe_remove_label(client, owner, repo, pr.number, label)
+    _clear_mq_labels(pr, client, config, owner, repo)
 
     # Upsert a user-facing status comment naming the eject reason — the bare
     # activation-status flip + label removal is invisible in the PR UI.
@@ -720,6 +814,24 @@ def _read_branch_tip(
     """Read the current commit SHA at the tip of ``branch``."""
     resp = client.rest.repos.get_branch(owner, repo, branch)
     return str(resp.parsed_data.commit.sha)
+
+
+def _clear_mq_labels(
+    pr: PRState,
+    client: GitHubClient,
+    config: MergeQueueConfig,
+    owner: str,
+    repo: str,
+) -> None:
+    """Remove every mq:* label visible in ``pr.labels``.
+
+    Iterate over the frozen snapshot from the caller so terminal cleanup is
+    idempotent even if some labels were already removed by a competing audit
+    event or a previous retry.
+    """
+    for label in pr.labels:
+        if label.startswith(config.label_prefix):
+            _safe_remove_label(client, owner, repo, pr.number, label)
 
 
 def _safe_remove_label(
