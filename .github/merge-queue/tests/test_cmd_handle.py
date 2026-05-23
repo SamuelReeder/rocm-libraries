@@ -814,6 +814,57 @@ class TestMainDequeue:
         # eyes-reaction still posted
         assert (4242, "eyes") in fake_state.reactions_log
 
+    def test_dequeue_allows_pr_author_without_repo_role(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: FakeGitHub,
+        fake_state: FakeRepoState,
+        hipdnn_config: MergeQueueConfig,
+    ) -> None:
+        _seed_pr(fake_state, labels={"mq:queued", "mq:hipdnn"}, user_login="alice")
+        payload = _make_event_payload(comment_body="/dequeue", commenter_login="alice")
+        rc = _run_main(
+            tmp_path,
+            monkeypatch,
+            payload=payload,
+            fake_client=fake_client,
+            config=hipdnn_config,
+        )
+        assert rc == 0
+        assert fake_state.prs[7].labels == set()
+        assert (4242, "eyes") in fake_state.reactions_log
+
+    def test_dequeue_rejects_non_author_without_write_role(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: FakeGitHub,
+        fake_state: FakeRepoState,
+        hipdnn_config: MergeQueueConfig,
+    ) -> None:
+        _seed_pr(fake_state, labels={"mq:queued", "mq:hipdnn"}, user_login="bob")
+        fake_state.collaborators["alice"] = "read"
+        fake_state.comments_store[7] = {
+            123: "existing queued status\n<!-- rocm-mq-status -->",
+        }
+        payload = _make_event_payload(comment_body="/dequeue", commenter_login="alice")
+        rc = _run_main(
+            tmp_path,
+            monkeypatch,
+            payload=payload,
+            fake_client=fake_client,
+            config=hipdnn_config,
+        )
+        assert rc == 0
+        assert fake_state.prs[7].labels == {"mq:queued", "mq:hipdnn"}
+        assert (4242, "eyes") not in fake_state.reactions_log
+        comments = fake_state.comments_store.get(7, {})
+        assert comments[123] == "existing queued status\n<!-- rocm-mq-status -->"
+        bodies = list(comments.values())
+        assert any("`/dequeue` rejected" in b and "read" in b for b in bodies)
+        assert not any("Ejected from merge queue" in b for b in bodies)
+
 
 # ---------------------------------------------------------------------------
 # main() non-PR / non-created event skip path

@@ -1,6 +1,6 @@
 """
 rocm_mq.cmd_handle — Command handler for ``/merge`` and ``/dequeue``
-(RFC §4.3–§4.5). Invoked from ``.github/workflows/mq-handler.yml`` on every
+(RFC §4.3-§4.5). Invoked from ``.github/workflows/mq-handler.yml`` on every
 ``issue_comment: [created]`` event.
 
 Public surface:
@@ -549,16 +549,32 @@ def _handle_dequeue(
 ) -> int:
     """End-to-end /dequeue dispatch. Returns 0 on success.
 
-    Does NOT re-run the at-enqueue perm check on dequeue — anyone who can
-    comment on the PR may dequeue it (RFC §4.5 is silent on the exact perm
-    boundary). Eyes-reaction is posted as the visible ack; the status
-    comment is upserted to an "ejected" state with reason
-    "/dequeue requested".
+    RFC §4.4 uses the same permission boundary as ``/merge``: the PR author
+    or any collaborator with write/maintain/admin may dequeue. Unauthorized
+    requests are rejected before any visible ack reaction, label removal, or
+    status-comment update.
     """
-    _ = commenter_login  # reserved for future perm tightening
     pr_resp = client.rest.pulls.get(owner, repo, pr_number)
     pr = pr_resp.parsed_data
     pr_author_login = str(getattr(getattr(pr, "user", None), "login", ""))
+
+    eligible, role_name = _check_perm(
+        client,
+        owner,
+        repo,
+        commenter_login,
+        pr_author_login=pr_author_login,
+    )
+    if not eligible:
+        body = (
+            f"`/dequeue` rejected: @{commenter_login} has role `{role_name}` on "
+            f"this repository, which is not in the eligible set "
+            f"({', '.join(sorted(_ELIGIBLE_ROLES))}) and you are not the PR "
+            "author. Per RFC §4.4 the merge queue requires write-or-above "
+            "permission to dequeue another author's PR."
+        )
+        _post_comment(client, owner, repo, pr_number, body)
+        return 0
 
     _remove_mq_labels(client, owner, repo, pr_number, pr)
 
