@@ -22,6 +22,7 @@ production data shapes.
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -91,6 +92,17 @@ def _patch_repos_merge_to_advance_pr_head(fake: FakeGitHub, pr_number: int) -> N
     fake.rest.repos.merge = patched_merge  # type: ignore[assignment]
 
 
+def _patch_repos_get_branch(fake: FakeGitHub, *, branch_sha: str | None = None) -> None:
+    """Add get_branch to the fake's repos namespace for squash handlers."""
+
+    def get_branch(owner: str, repo: str, branch: str) -> Any:
+        sha = branch_sha if branch_sha is not None else fake.state.develop_tip
+        return SimpleNamespace(
+            parsed_data=SimpleNamespace(commit=SimpleNamespace(sha=sha))
+        )
+    fake.rest.repos.get_branch = get_branch  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # 1. End-to-end activate scenario — labels flip, status posted
 # ---------------------------------------------------------------------------
@@ -133,6 +145,63 @@ def test_process_cycle__fake__activate_scenario() -> None:
     pr_labels = fake.state.prs[42].labels
     assert "mq:active" in pr_labels, f"Expected mq:active in {pr_labels}"
     assert "mq:queued" not in pr_labels, f"Expected mq:queued removed, got {pr_labels}"
+
+
+def test_process_cycle__stale_active_pr_ejects_before_squash() -> None:
+    """process_cycle reaches the pre-squash stale-state guard before merging."""
+    from rocm_mq import cmd_process
+    from rocm_mq.state import Eject
+
+    state = FakeRepoState(develop_tip="develop_initial_tip")
+    state.prs[42] = FakePR(
+        number=42,
+        head_sha="head_sha_42",
+        labels={"mq:active", "mq:miopen-provider"},
+    )
+    state.label_log.append(("42", "labeled", "mq:queued"))
+    fake = FakeGitHub(state)
+    config = canonical_merge_queue_config()
+    fake.rest.repos.create_commit_status(
+        "SamuelReeder",
+        "rocm-libraries",
+        "head_sha_42",
+        state="success",
+        context=config.activation_status_context,
+    )
+    _patch_repos_get_branch(fake)
+
+    real_pulls_get = fake.rest.pulls.get
+    calls = {"n": 0}
+
+    def drifting_pulls_get(owner: str, repo: str, pull_number: int) -> Any:
+        resp = real_pulls_get(owner, repo, pull_number)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            fake.state.prs[pull_number].labels.discard("mq:active")
+        return resp
+
+    fake.rest.pulls.get = drifting_pulls_get  # type: ignore[assignment]
+
+    def should_not_merge(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("pulls.merge must not run after stale active drift")
+
+    fake.rest.pulls.merge = should_not_merge  # type: ignore[assignment]
+
+    outcomes = cmd_process.process_cycle(
+        client=fake,
+        config=config,
+        owner="SamuelReeder",
+        repo="rocm-libraries",
+        dry_run=False,
+        now=utc(2026, 5, 18, 10, 0),
+    )
+
+    assert len(outcomes) == 1
+    outcome = outcomes[0]
+    assert outcome.success is False
+    assert isinstance(outcome.action, Eject)
+    assert fake.state.prs[42].merged is False
+    assert not any(label.startswith("mq:") for label in fake.state.prs[42].labels)
 
 
 # ---------------------------------------------------------------------------

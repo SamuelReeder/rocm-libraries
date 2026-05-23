@@ -358,12 +358,46 @@ class TestAtEnqueueGates:
         )
         assert "failing-required-check" in fails
 
-    def test_fails_on_failing_check_run(
-        self, fake_client: FakeGitHub, fake_state: FakeRepoState
+    @pytest.mark.parametrize(
+        "bad_conclusion",
+        [
+            "failure",
+            "timed_out",
+            "cancelled",
+            "action_required",
+            "startup_failure",
+            "stale",
+        ],
+    )
+    def test_fails_on_bad_check_run_conclusions(
+        self,
+        bad_conclusion: str,
+        fake_client: FakeGitHub,
+        fake_state: FakeRepoState,
     ) -> None:
         _seed_pr(
             fake_state,
             combined_statuses=[],
+            check_runs=[
+                {
+                    "name": "TheRock CI Summary",
+                    "status": "completed",
+                    "conclusion": bad_conclusion,
+                }
+            ],
+        )
+        pr = fake_client.rest.pulls.get("o", "r", 7).parsed_data
+        fails = cmd_handle._check_at_enqueue_gates(
+            fake_client, "o", "r", 7, pr, queues=frozenset({"hipdnn"})
+        )
+        assert "failing-required-check" in fails
+
+    def test_combined_status_and_check_run_failure_emit_one_gate_failure(
+        self, fake_client: FakeGitHub, fake_state: FakeRepoState
+    ) -> None:
+        _seed_pr(
+            fake_state,
+            combined_statuses=[{"context": "ci", "state": "failure"}],
             check_runs=[
                 {
                     "name": "TheRock CI Summary",
@@ -376,7 +410,7 @@ class TestAtEnqueueGates:
         fails = cmd_handle._check_at_enqueue_gates(
             fake_client, "o", "r", 7, pr, queues=frozenset({"hipdnn"})
         )
-        assert "failing-required-check" in fails
+        assert fails.count("failing-required-check") == 1
 
     def test_pending_check_run_is_allowed(
         self, fake_client: FakeGitHub, fake_state: FakeRepoState

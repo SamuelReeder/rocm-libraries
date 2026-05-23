@@ -748,6 +748,58 @@ def test_handle_squash__preflight_label_tamper_ejects_without_merge() -> None:
     assert fake.state.prs[42].merged is False
     assert not any(label.startswith("mq:") for label in fake.state.prs[42].labels)
 
+@pytest.mark.parametrize(
+    "drift",
+    [
+        "head-sha-changed",
+        "activation-status-missing",
+        "activation-status-non-app",
+        "queued-label-present",
+        "queue-label-missing",
+    ],
+)
+def test_handle_squash__preflight_rejects_each_stale_active_shape(
+    drift: str,
+) -> None:
+    """Every canonical stale-active shape ejects before calling pulls.merge."""
+    from rocm_mq import executor
+
+    fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
+    _patch_repos_get_branch(fake)
+    config = canonical_merge_queue_config()
+    pr = _seed_valid_activation(fake, config)
+
+    if drift == "head-sha-changed":
+        fake.state.prs[42].head_sha = "new_head_sha"
+    elif drift == "activation-status-missing":
+        del fake.state.status_store[("head_sha_aaa", config.activation_status_context)]
+    elif drift == "activation-status-non-app":
+        fake.state.status_store[
+            ("head_sha_aaa", config.activation_status_context)
+        ]["creator_type"] = "workflow"
+    elif drift == "queued-label-present":
+        fake.state.prs[42].labels.add("mq:queued")
+    elif drift == "queue-label-missing":
+        fake.state.prs[42].labels.discard("mq:miopen-provider")
+    else:
+        raise AssertionError(f"unknown drift case: {drift}")
+
+    def should_not_merge(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        raise AssertionError(f"pulls.merge must not run for {drift}")
+
+    fake.rest.pulls.merge = should_not_merge  # type: ignore[assignment]
+
+    outcome = executor.dispatch(
+        Squash(pr=pr), client=fake, config=config, owner="org", repo="repo"
+    )
+
+    assert outcome.success is False
+    assert isinstance(outcome.action, Eject)
+    assert outcome.error_message is not None
+    assert "preflight failed" in outcome.error_message
+    assert fake.state.prs[42].merged is False
+    assert not any(label.startswith("mq:") for label in fake.state.prs[42].labels)
+
 
 def test_idempotency__status_overwrite__no_error_on_second_post() -> None:
     """create_commit_status called twice on same (SHA, context) — second succeeds."""
