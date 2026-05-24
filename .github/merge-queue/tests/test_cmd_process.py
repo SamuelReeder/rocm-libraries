@@ -837,11 +837,15 @@ def test_parse_args_handle_dispatches_to_run_handle() -> None:
 
 
 def test_parse_args_audit_dispatches_to_run_audit() -> None:
-    """audit subparser exists and dispatches to run_audit."""
+    """audit subparser populates --repo/--event-path and func."""
     from rocm_mq import cmd_process
 
-    args = cmd_process._parse_args(["audit"])
+    args = cmd_process._parse_args(
+        ["audit", "--repo", "owner/repo", "--event-path", "event.json"]
+    )
     assert args.subcommand == "audit"
+    assert args.repo == "owner/repo"
+    assert args.event_path == "event.json"
     assert args.func is cmd_process.run_audit
 
 
@@ -860,24 +864,30 @@ def test_parse_args_preflight_dispatches_to_run_preflight() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_main_audit_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
-    """audit is currently a no-op stub: exits 0 with a stderr note.
+def test_main_audit_dispatches_to_module(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """audit subcommand dispatches into rocm_mq.cmd_audit.main."""
+    from rocm_mq import cmd_audit, cmd_process
 
-    The stub announces itself in stderr so operators don't mistake the
-    no-op for "audit logic ran"; a future change fills in the RFC §4.3.1
-    auditor matrix.
-    """
-    from rocm_mq import cmd_process
+    recorded: list[list[str]] = []
 
-    rc = cmd_process.main(["audit"])
-    assert rc == 0
-    err = capsys.readouterr().err
-    assert "audit" in err.lower()
-    assert (
-        "no-op" in err.lower()
-        or "stub" in err.lower()
-        or "not yet implemented" in err.lower()
+    def spy(argv: list[str] | None = None) -> int:
+        recorded.append(list(argv or []))
+        return 17
+
+    monkeypatch.setattr(cmd_audit, "main", spy)
+
+    rc = cmd_process.main(
+        ["audit", "--repo", "owner/repo", "--event-path", "event.json"]
     )
+
+    assert rc == 17
+    assert recorded == [["--repo=owner/repo", "--event-path=event.json"]]
+    err = capsys.readouterr().err
+    assert "not yet implemented" not in err.lower()
+    assert "stub" not in err.lower()
 
 
 def test_main_handle_dispatches_to_module(
