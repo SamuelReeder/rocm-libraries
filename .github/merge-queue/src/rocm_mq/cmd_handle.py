@@ -20,7 +20,6 @@ queued PR via search-by-label and runs the decision algorithm (RFC §4.6).
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import json
 import os
 import re
@@ -32,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 from githubkit.exception import RequestFailed
 
 from rocm_mq.comment import render_status_body
-from rocm_mq.config import SELF_BOOTSTRAP_PATHS
+from rocm_mq import protected_paths
 from rocm_mq.executor import _find_status_comment_id
 from rocm_mq.pathmap import queues_for_paths
 from rocm_mq.state import MergeQueueConfig, PRState, RenderContext
@@ -98,10 +97,12 @@ def parse_commands(body: str) -> set[str]:
 
 
 def is_self_bootstrap(changed_paths: list[str]) -> list[str]:
-    """Return the subset of ``changed_paths`` that intersect SELF_BOOTSTRAP_PATHS.
+    """Return changed paths that intersect direct or generated protected roots.
 
-    Self-bootstrap protection per RFC §8. Uses ``fnmatch`` (case-sensitive
-    on GitHub's API-returned literal paths).
+    Self-bootstrap protection per RFC §8. Comparison is delegated to
+    ``rocm_mq.protected_paths`` so spelling variants are normalized for
+    comparison while user diagnostics retain GitHub's original changed path
+    strings.
 
     Args:
         changed_paths: List of file paths returned by
@@ -109,14 +110,24 @@ def is_self_bootstrap(changed_paths: list[str]) -> list[str]:
 
     Returns:
         Subset of ``changed_paths`` (input order preserved) that matched any
-        SELF_BOOTSTRAP glob. Empty list means the PR is safe to enqueue
-        from the self-bootstrap perspective.
+        SELF_BOOTSTRAP glob directly or via an inventoried generated
+        source→protected-output pair. Empty list means the PR is safe to
+        enqueue from the self-bootstrap perspective.
     """
-    hits: list[str] = []
-    for path in changed_paths:
-        if any(fnmatch.fnmatch(path, pat) for pat in SELF_BOOTSTRAP_PATHS):
-            hits.append(path)
-    return hits
+    direct_hits = protected_paths.find_protected_path_hits(changed_paths)
+    generated_hits = protected_paths.find_generated_protected_path_hits(
+        changed_paths,
+        pairs=protected_paths.GENERATED_PROTECTED_PATH_PAIRS,
+    )
+    if not direct_hits:
+        return generated_hits
+    if not generated_hits:
+        return direct_hits
+    return [
+        path
+        for path in changed_paths
+        if path in direct_hits or path in generated_hits
+    ]
 
 
 # ---------------------------------------------------------------------------
