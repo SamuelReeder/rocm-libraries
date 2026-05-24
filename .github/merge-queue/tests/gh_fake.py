@@ -67,6 +67,8 @@ class FakePR:
     # GitHub semantics for same-repo PRs).
     head_repo_id: int = 1
     base_repo_id: int = 1
+    base_ref: str = "develop"
+    draft: bool = False
 
 
 @dataclass
@@ -547,12 +549,14 @@ class _PullsNS:
                     repo=SimpleNamespace(id=pr.head_repo_id),
                 ),
                 base=SimpleNamespace(
+                    ref=pr.base_ref,
                     repo=SimpleNamespace(id=pr.base_repo_id),
                 ),
                 labels=[SimpleNamespace(name=n) for n in sorted(pr.labels)],
                 user=SimpleNamespace(login=pr.user_login),
                 maintainer_can_modify=pr.maintainer_can_modify,
                 merged=pr.merged,
+                draft=pr.draft,
             )
         )
 
