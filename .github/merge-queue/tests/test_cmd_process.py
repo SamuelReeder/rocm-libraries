@@ -21,7 +21,9 @@ production data shapes.
 
 from __future__ import annotations
 
+import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -859,6 +861,18 @@ def test_parse_args_preflight_dispatches_to_run_preflight() -> None:
     assert args.func is cmd_process.run_preflight
 
 
+def test_parse_args_validate_config_dispatches_to_run_validate_config() -> None:
+    """validate-config subparser populates --path and func."""
+    from rocm_mq import cmd_process
+
+    args = cmd_process._parse_args(
+        ["validate-config", "--path", "path_to_queues.yml"]
+    )
+    assert args.subcommand == "validate-config"
+    assert args.path == "path_to_queues.yml"
+    assert args.func is cmd_process.run_validate_config
+
+
 # ---------------------------------------------------------------------------
 # 15. main() dispatch — subcommand stubs surface their expected exit codes
 # ---------------------------------------------------------------------------
@@ -1004,6 +1018,48 @@ def test_main_preflight_dispatches_to_module(
     # The preflight module's happy-path log surfaces through.
     assert "preflight passed" in err
 
+
+def test_main_validate_config_dispatches_to_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """validate-config dispatches into rocm_mq.config_validator.main."""
+    from rocm_mq import cmd_process, config_validator
+
+    recorded: list[list[str]] = []
+
+    def spy(argv: list[str] | None = None) -> int:
+        recorded.append(list(argv or []))
+        return 19
+
+    monkeypatch.setattr(config_validator, "main", spy)
+
+    rc = cmd_process.main(["validate-config", "--path", "path_to_queues.yml"])
+
+    assert rc == 19
+    assert recorded == [["--path=path_to_queues.yml"]]
+
+
+def test_module_cli_validate_config_accepts_production_yaml() -> None:
+    """python -m rocm_mq validate-config exits zero for valid production YAML."""
+    package_root = Path(__file__).resolve().parents[1]
+    yaml_path = package_root / "path_to_queues.yml"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "rocm_mq",
+            "validate-config",
+            "--path",
+            str(yaml_path),
+        ],
+        cwd=package_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 # Defensive — MagicMock is imported so static linters don't drop the import.
 _ = MagicMock

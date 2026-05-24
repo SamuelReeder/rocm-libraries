@@ -208,3 +208,52 @@ def test_validation_error_objects_are_structured_and_stable() -> None:
     assert isinstance(error.path, str)
     assert isinstance(error.message, str)
     assert isinstance(error.details, tuple)
+
+
+def test_cli_returns_zero_for_valid_production_yaml(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from rocm_mq import config_validator
+
+    rc = config_validator.main(["--path", str(_YAML_PATH)])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.err == ""
+
+
+def test_cli_returns_one_and_prints_error_codes_for_invalid_config(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from rocm_mq import config_validator
+
+    config_path = tmp_path / "bad.yml"
+    config_path.write_text("queues: []\npaths: []\n", encoding="utf-8")
+
+    rc = config_validator.main(["--path", str(config_path)])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "graph.queues_mismatch" in captured.err
+
+
+@pytest.mark.parametrize("payload", ["missing", "non_mapping"])
+def test_cli_returns_two_for_invocation_or_load_shape_errors(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    payload: str,
+) -> None:
+    from rocm_mq import config_validator
+
+    if payload == "missing":
+        config_path = tmp_path / "missing.yml"
+    else:
+        config_path = tmp_path / "not-mapping.yml"
+        config_path.write_text("- not\n- mapping\n", encoding="utf-8")
+
+    rc = config_validator.main(["--path", str(config_path)])
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "error:" in captured.err
