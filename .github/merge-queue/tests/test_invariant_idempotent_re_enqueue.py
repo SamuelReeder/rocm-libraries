@@ -52,7 +52,7 @@ class IdempotentReEnqueueMachine(MergeQueueStateMachineBase):
     def decide_cycle_is_pure(self) -> None:
         """decide_cycle must return canonically equal action lists on repeated calls.
 
-        Reads shadow_prs to build a snapshot — uses shadow state only (Pitfall 11).
+        Reads shadow_prs to build a snapshot — uses shadow state only.
         Calls decide_cycle twice and compares canonicalized results.
         """
         snapshot = self._build_snapshot_from_shadow()

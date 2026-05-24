@@ -193,7 +193,7 @@ def test_anti_pydantic_canary_no_basemodel_in_state() -> None:
     """state.py must not export BaseModel (or any Pydantic type)."""
     assert not hasattr(state_module, "BaseModel"), (
         "rocm_mq.state exports a Pydantic BaseModel — this violates the "
-        "pure-dataclass contract (STACK.md 'What NOT to Use')"
+        "pure-dataclass contract"
     )
 
 
@@ -222,8 +222,8 @@ def test_anti_pydantic_canary_pydantic_not_imported() -> None:
     )
     assert result.returncode == 0, (
         "pydantic was found in sys.modules after importing rocm_mq in a clean "
-        "subprocess — this violates the pure-dataclass contract "
-        f"(Pitfall 1, STACK.md). stderr: {result.stderr}"
+        "subprocess — this violates the pure-dataclass contract. "
+        f"stderr: {result.stderr}"
     )
 
 
@@ -282,7 +282,8 @@ def test_action_union_is_pep604() -> None:
 
 
 def test_deferred_pr_and_partial_pr_state_exported() -> None:
-    """DeferredPR and PartialPRState (Q1+Q4 resolutions) are exported from state.py."""
+    """DeferredPR and PartialPRState (the two Defer-target sum variants) are
+    exported from state.py."""
     from rocm_mq.state import DeferredPR, PartialPRState
 
     assert dataclasses.is_dataclass(DeferredPR)

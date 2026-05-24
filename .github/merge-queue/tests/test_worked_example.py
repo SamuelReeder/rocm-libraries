@@ -171,9 +171,9 @@ _CASES = [
     # T1: A is active (mq:active, is_validly_active=True, checks="success").
     #     E has joined (enqueued_at=T1, later than T0 — tail of all queues).
     #     B, C, D remain queued.
-    #     Q2 resolution: this cycle emits [Squash(A)] only; B/C activations land
-    #     in the NEXT cycle (T2). Squash and Activate are never co-emitted for
-    #     the same PR, but PRs in disjoint queues can be in the same cycle.
+    #     This cycle emits [Squash(A)] only; B/C activations land in the NEXT
+    #     cycle (T2). Squash and Activate are never co-emitted for the same
+    #     PR, but PRs in disjoint queues can be in the same cycle.
     #     However here, B blocks on A in miopen-provider (A is active, still in
     #     the snapshot) — once A is squashed the executor removes it, freeing B
     #     and C. Until the next cycle, B and C are not heads.
@@ -182,7 +182,7 @@ _CASES = [
         Snapshot(prs=(_active(A), B, C, D, E)),
         [Squash(pr=_active(A))],
         "list",
-        id="T1-squash-A-Q2-resolution",
+        id="T1-squash-A-only",
     ),
     # T2: A has been merged (executor removed it). B and C are heads of their
     #     respective sole-membership queues (miopen-provider and hipblaslt-provider).
@@ -196,7 +196,7 @@ _CASES = [
     #     B is head of miopen-provider only (not blocked elsewhere).
     #     C is head of hipblaslt-provider only (not blocked elsewhere).
     #     B and C are in DISJOINT queues → both activate this cycle (order unspecified).
-    #     Set equality per Pitfall 8.
+    #     Set equality — disjoint queue sets, order unspecified.
     pytest.param(
         T2,
         Snapshot(prs=(B, C, D, E)),
@@ -277,12 +277,12 @@ def test_worked_example_timestep(
 
     Calls ``decide_cycle`` with the timestep's snapshot and asserts the returned
     action list matches the expected actions. At T2 and T3 (disjoint queue sets),
-    set equality is used to tolerate implementation-defined ordering (Pitfall 8).
-    At all other timesteps, list equality is used.
+    set equality is used to tolerate implementation-defined ordering across
+    disjoint queues (RFC §4.6). At all other timesteps, list equality is used.
     """
     actions = decide_cycle(snapshot, CONFIG, now)  # type: ignore[arg-type]
     if kind == "set":
-        # Pitfall 8: order across disjoint queue sets is implementation-defined.
+        # Order across disjoint queue sets is implementation-defined (RFC §4.6).
         # Set equality is the correct assertion here — see module docstring.
         assert set(actions) == expected
     else:
@@ -307,7 +307,7 @@ def test_worked_example_full_sequence() -> None:
     actions_t0 = decide_cycle(Snapshot(prs=(A, B, C, D)), CONFIG, T0)
     assert actions_t0 == [Activate(pr=A)]
 
-    # T1: A squashes (Q2: B/C activations deferred to next cycle)
+    # T1: A squashes (B/C activations deferred to next cycle — per-PR rule)
     actions_t1 = decide_cycle(Snapshot(prs=(_active(A), B, C, D, E)), CONFIG, T1)
     assert actions_t1 == [Squash(pr=_active(A))]
 
@@ -342,7 +342,7 @@ def test_worked_example_full_sequence() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pitfall 8 sanity check
+# Disjoint-queue-order sanity check
 #
 # Explicitly documents WHY set equality is used at T2/T3: the RFC guarantees
 # Activate(B) and Activate(C) will both be in the action list, but says nothing
@@ -350,8 +350,8 @@ def test_worked_example_full_sequence() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_pitfall8_t2_set_equality_rationale() -> None:
-    """Pitfall 8 regression: T2 actions contain both Activate(B) and Activate(C).
+def test_disjoint_queues_t2_set_equality_rationale() -> None:
+    """Regression guard: T2 actions contain both Activate(B) and Activate(C).
 
     list(actions) may have different order across runs (implementation-defined
     ordering across disjoint queue sets — RFC §4.6). The set comparison below
