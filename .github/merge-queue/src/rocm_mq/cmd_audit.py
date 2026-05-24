@@ -206,7 +206,9 @@ def _run(args: argparse.Namespace, owner: str, repo: str, token: str) -> int:
         return 0
 
     now = datetime.now(tz=UTC)
-    pr_state = _build_live_pr_state(classification.pr_number, live_pr, live_labels, config, now)
+    pr_state = _build_live_pr_state(
+        classification.pr_number, live_pr, live_labels, config, now
+    )
     _eject_live_pr(client, config, owner, repo, pr_state, classification, live_pr)
     return 0
 
@@ -238,9 +240,14 @@ def _live_state_requires_eject(
             return _has_mq_label(live_labels, config)
         return True
     if classification.detail == "base-ref-change":
-        return _has_mq_label(live_labels, config) and _live_base_ref(live_pr) != "develop"
+        return (
+            _has_mq_label(live_labels, config)
+            and _live_base_ref(live_pr) != "develop"
+        )
     if classification.detail == "draft-conversion":
-        return _has_mq_label(live_labels, config) and bool(getattr(live_pr, "draft", False))
+        return _has_mq_label(live_labels, config) and bool(
+            getattr(live_pr, "draft", False)
+        )
     if classification.detail == "stale-label-reopen":
         return _has_mq_label(live_labels, config)
     return False
@@ -375,7 +382,8 @@ def _status_code(exc: RequestFailed) -> int | None:
 
 def _live_label_names(live_pr: Any) -> tuple[str, ...]:
     return tuple(
-        str(getattr(label, "name", "")) for label in (getattr(live_pr, "labels", []) or [])
+        str(getattr(label, "name", ""))
+        for label in (getattr(live_pr, "labels", []) or [])
     )
 
 
