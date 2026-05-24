@@ -682,7 +682,7 @@ def test_idempotency__remove_label_404__treated_as_noop() -> None:
 
 
 def test_idempotency__squash_already_merged__405_treated_as_noop() -> None:
-    """pulls.merge raising 405 (already merged) → ActionOutcome(success=True)."""
+    """pulls.merge 405 + structured merged=True → ActionOutcome(success=True)."""
     from rocm_mq import executor
 
     fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
@@ -699,6 +699,85 @@ def test_idempotency__squash_already_merged__405_treated_as_noop() -> None:
     # error_message documents the no-op.
     assert outcome.error_message is not None
     assert "merged" in outcome.error_message.lower()
+
+
+def test_idempotency__squash_405_refetch_merged_ignores_body_text() -> None:
+    """Already-merged idempotency uses pulls.get().merged, not error wording."""
+    from rocm_mq import executor
+
+    fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
+    _patch_repos_get_branch(fake)
+    config = canonical_merge_queue_config()
+    pr = _seed_valid_activation(fake, config)
+
+    def merge_405_without_magic_words(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        fake.state.prs[42].merged = True
+        raise _make_request_failed(405, message="Merge is not currently allowed")
+
+    fake.rest.pulls.merge = merge_405_without_magic_words  # type: ignore[assignment]
+
+    outcome = executor.dispatch(
+        Squash(pr=pr), client=fake, config=config, owner="org", repo="repo"
+    )
+
+    assert outcome.success is True
+    assert outcome.error_message is not None
+    assert "already merged" in outcome.error_message
+
+
+def test_handle_squash__405_pending_body_still_waits() -> None:
+    """Non-merged 405 with pending-check wording remains a retry-later outcome."""
+    from rocm_mq import executor
+
+    fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
+    _patch_repos_get_branch(fake)
+    config = canonical_merge_queue_config()
+    pr = _seed_valid_activation(fake, config)
+
+    def merge_405_pending(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        raise _make_request_failed(
+            405,
+            message='Required status check "TheRock CI Summary" is expected.',
+        )
+
+    fake.rest.pulls.merge = merge_405_pending  # type: ignore[assignment]
+
+    outcome = executor.dispatch(
+        Squash(pr=pr), client=fake, config=config, owner="org", repo="repo"
+    )
+
+    assert outcome.success is False
+    assert outcome.error_message is not None
+    assert "merge pending" in outcome.error_message
+    assert fake.state.prs[42].labels == {"mq:active", "mq:miopen-provider"}
+
+
+def test_handle_squash__405_permanent_body_ejects() -> None:
+    """Non-merged non-pending 405 remains a permanent branch-protection eject."""
+    from rocm_mq import executor
+
+    fake = _make_fake_with_pr(number=42, head_sha="head_sha_aaa")
+    _patch_repos_get_branch(fake)
+    config = canonical_merge_queue_config()
+    pr = _seed_valid_activation(fake, config)
+
+    def merge_405_failed(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        raise _make_request_failed(
+            405,
+            message='Required status check "TheRock CI Summary" is failing.',
+        )
+
+    fake.rest.pulls.merge = merge_405_failed  # type: ignore[assignment]
+
+    outcome = executor.dispatch(
+        Squash(pr=pr), client=fake, config=config, owner="org", repo="repo"
+    )
+
+    assert outcome.success is False
+    assert isinstance(outcome.action, Eject)
+    assert not any(label.startswith("mq:") for label in fake.state.prs[42].labels)
+    assert outcome.error_message is not None
+    assert "TheRock CI Summary" in outcome.error_message
 
 
 def test_handle_squash__success_cleans_labels_and_marks_merged() -> None:

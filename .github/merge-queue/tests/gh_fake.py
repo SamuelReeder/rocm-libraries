@@ -552,6 +552,7 @@ class _PullsNS:
                 labels=[SimpleNamespace(name=n) for n in sorted(pr.labels)],
                 user=SimpleNamespace(login=pr.user_login),
                 maintainer_can_modify=pr.maintainer_can_modify,
+                merged=pr.merged,
             )
         )
 

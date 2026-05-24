@@ -40,15 +40,12 @@ jobs:
       cancel-in-progress: false
 
     # Per-job permission scoping (RFC §4.9 token split):
-    #   contents: read       — sparse-checkout from develop
-    #   issues: write        — GITHUB_TOKEN :eyes: reaction on trigger comment
-    #   pull-requests: read  — pulls.list_files for self-bootstrap intersection
-    # The App token (minted below) carries the write permissions for labels,
-    # status comment, and merge-queue/active status; GITHUB_TOKEN is bounded.
+    #   contents: read       — sparse-checkout from develop + preflight reads
+    # The App token (minted below) carries write permissions for labels,
+    # status comments, reactions, and merge-queue/active statuses. Keep the
+    # default GITHUB_TOKEN read-only so pre-App-token steps cannot mutate issues.
     permissions:
       contents: read
-      issues: write
-      pull-requests: read
 
     steps:
       # Pre-flight runs before any App-token mint: if the fork's default

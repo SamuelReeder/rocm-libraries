@@ -397,8 +397,8 @@ def _handle_squash_failure(
     Status-code map (GitHub merge-API docs):
 
       * **200** — handled by the caller's success path; never reaches here.
-      * **405** Method Not Allowed — most common failure. Body inspected:
-          - "already merged" → no-op (success=True)
+      * **405** Method Not Allowed — most common failure:
+          - refetch PR; ``merged == True`` → no-op (success=True)
           - "expected" / "in_progress" / "in progress" in body → pending
             required check; do NOT eject, retry next cycle (success=False
             with informational error_message).
@@ -416,8 +416,10 @@ def _handle_squash_failure(
     body = _error_message_body(exc)
     body_lower = body.lower()
 
-    # Idempotent re-merge of a previously-merged PR.
-    if status == 405 and "already merged" in body_lower:
+    # Idempotent re-merge of a previously-merged PR. Use structured PR state
+    # before parsing GitHub's human-readable 405 body; wording is not a
+    # contract, but `merged` is part of the PR payload.
+    if status == 405 and _read_pr_merged(client, owner, repo, pr.number):
         return ActionOutcome(
             action=action,
             success=True,
@@ -799,6 +801,17 @@ def _read_pr(
     """Read a single PR's parsed_data (carries ``head.sha`` and ``head.ref``)."""
     resp = client.rest.pulls.get(owner, repo, pr_number)
     return resp.parsed_data
+
+
+def _read_pr_merged(
+    client: GitHubClient,
+    owner: str,
+    repo: str,
+    pr_number: int,
+) -> bool:
+    """Return the structured merged flag from pulls.get."""
+    pr_obj = _read_pr(client, owner, repo, pr_number)
+    return bool(getattr(pr_obj, "merged", False))
 
 
 def _read_branch_tip(
