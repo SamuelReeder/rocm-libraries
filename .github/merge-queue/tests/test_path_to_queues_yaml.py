@@ -52,8 +52,5 @@ def test_production_queues_present() -> None:
 def test_comments_do_not_point_to_a_dedicated_validator_workflow() -> None:
     """D-07 binds validation to mq-test.yml, not mq-config-validate.yml."""
     yaml_text = _YAML_PATH.read_text(encoding="utf-8")
-    test_text = pathlib.Path(__file__).read_text(encoding="utf-8")
-
     assert "mq-config-validate.yml" not in yaml_text
     assert "mq-config-validate workflow" not in yaml_text.lower()
-    assert "dedicated mq-config-validate" not in test_text.lower()

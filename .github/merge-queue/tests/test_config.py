@@ -291,8 +291,8 @@ def test_build_config_from_develop__empty_queues_lists(
 
 def test_runtime_loaders_do_not_call_validator_local_loader() -> None:
     """Handler/processor config construction must keep using develop-ref Contents API."""
-    source = inspect.getsource(config_module.build_config_from_develop)
+    names = config_module.build_config_from_develop.__code__.co_names
 
-    assert "load_from_develop" in source
-    assert "load_local" not in source
-    assert "config_validator" not in source
+    assert "load_from_develop" in names
+    assert "load_local" not in names
+    assert "config_validator" not in names

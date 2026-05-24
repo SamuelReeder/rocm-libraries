@@ -13,8 +13,8 @@ Two public surfaces:
   2. ``load_from_develop(client, owner, repo)`` — minimal non-validating loader
      for ``.github/merge-queue/path_to_queues.yml`` from the ``develop`` ref via
      the GitHub Contents API + ``yaml.safe_load``. Returns the raw parsed
-     payload; schema validation lives in a separate validator workflow
-     (RFC §4.8).
+     payload; semantic validation lives in ``rocm_mq.config_validator`` under
+     the existing ``mq-test.yml`` package test path (RFC §4.8).
 
 Plus two trivial env-var-NAME constants (``APP_SLUG_ENV``, ``APP_ID_ENV``)
 that the handler reads from at runtime to pin the merge-queue App's identity
@@ -94,7 +94,7 @@ def load_from_develop(client: GitHubClient, owner: str, repo: str) -> dict[str, 
 
     No schema validation here; the RFC §4.8 validator (every queue named in
     a paths entry also appears in ``queues:``, every upstream lists every
-    downstream) lives in a separate config-validate workflow.
+    downstream) is local test/CLI code in ``rocm_mq.config_validator``.
 
     Args:
         client: A ``GitHubClient`` (or any object exposing
@@ -147,8 +147,8 @@ def build_config_from_develop(
 
     Raises:
         ValueError: If the YAML root is not a mapping (bare list, scalar, None).
-            Schema-graph validation lives in the separate config-validate
-            workflow (RFC §4.8).
+            Schema-graph validation lives in ``rocm_mq.config_validator`` and
+            is enforced by the existing package tests (RFC §4.8).
     """
     # Late imports to keep config.py's import surface small and to avoid
     # importing the pure-layer state module at I/O-layer import time.

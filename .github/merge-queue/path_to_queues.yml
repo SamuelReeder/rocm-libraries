@@ -17,10 +17,10 @@
 #   → {"app": "github-actions", "name": "TheRock CI Summary", ...}
 # matches `.github/workflows/therock-ci.yml` line 171 (`name: TheRock CI Summary`).
 #
-# Schema validation (graph closure of upstream/downstream queue membership,
-# required-check format, queue-name lexical rules) is Phase 4
-# (mq-config-validate.yml). This file is trusted-but-attested today: the
-# develop branch is branch-protected, edits land via maintainer merge only.
+# Semantic validation (shape, queue references, graph closure, and trust-boundary
+# route entries) is enforced by the existing .github/workflows/mq-test.yml
+# package test path. Runtime handler/processor loading still reads this file
+# from develop via the GitHub Contents API.
 
 queues:
   - hipdnn
