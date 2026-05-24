@@ -287,3 +287,12 @@ def test_build_config_from_develop__empty_queues_lists(
     config = build_config_from_develop(fake, "owner", "repo")  # type: ignore[arg-type]
     assert config.all_queues == ()
     assert config.path_to_queues == ()
+
+
+def test_runtime_loaders_do_not_call_validator_local_loader() -> None:
+    """Handler/processor config construction must keep using develop-ref Contents API."""
+    source = inspect.getsource(config_module.build_config_from_develop)
+
+    assert "load_from_develop" in source
+    assert "load_local" not in source
+    assert "config_validator" not in source

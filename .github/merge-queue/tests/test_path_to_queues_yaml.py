@@ -1,103 +1,42 @@
-"""Smoke tests for path_to_queues.yml.
+"""Validator-backed tests for the production path_to_queues.yml.
 
-These are PARSE-LEVEL tripwires only: yaml.safe_load succeeds, the top-level
-shape matches the handler/processor's expectations, and every queue named in a
-path entry exists in the queues list.
-
-Full schema validation (graph-closure of upstream/downstream queue
-relationships, queue-name lexical rules, etc.) is a future follow-up — a
-dedicated mq-config-validate workflow.
-
-Locate the YAML via pathlib so the test runs regardless of CWD (e.g., from
-the repo root, from .github/merge-queue, or via pytest-xdist worker).
+The existing mq-test.yml package test path is the config validation gate: PRs
+that edit this YAML run these tests and fail on shape, graph-closure, queue
+reference, or trust-boundary errors.
 """
 
 from __future__ import annotations
 
 import pathlib
 
-import pytest
-import yaml
+from rocm_mq.config_validator import load_local, validate_path_to_queues
 
 # .github/merge-queue/tests/test_path_to_queues_yaml.py
 #   parents[0] = tests/
 #   parents[1] = .github/merge-queue/
-_YAML_PATH = pathlib.Path(__file__).resolve().parents[1] / "path_to_queues.yml"
+_PACKAGE_ROOT = pathlib.Path(__file__).resolve().parents[1]
+_YAML_PATH = _PACKAGE_ROOT / "path_to_queues.yml"
 
 
-# ---------------------------------------------------------------------------
-# Module-level fixture: parse the YAML once per session.
-# ---------------------------------------------------------------------------
+def test_production_yaml_validates_cleanly() -> None:
+    """Production YAML must satisfy the semantic validator, not just parse."""
+    payload = load_local(_YAML_PATH)
+
+    errors = validate_path_to_queues(payload)
+
+    assert errors == (), [error.code for error in errors]
 
 
-@pytest.fixture(scope="module")
-def parsed() -> dict[str, object]:
-    """Return the parsed YAML payload (yaml.safe_load result)."""
-    with _YAML_PATH.open("r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+def test_top_level_keys_remain_queue_routing_only() -> None:
+    """Branch protection remains the source of truth for required checks."""
+    payload = load_local(_YAML_PATH)
+
+    assert set(payload.keys()) == {"queues", "paths"}
 
 
-# ---------------------------------------------------------------------------
-# Parse-level tripwire.
-# ---------------------------------------------------------------------------
-
-
-def test_yaml_parseable() -> None:
-    """yaml.safe_load succeeds and returns a dict."""
-    assert _YAML_PATH.exists(), f"Expected file at {_YAML_PATH}"
-    with _YAML_PATH.open("r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
-    assert isinstance(data, dict), f"Expected dict at top level, got {type(data).__name__}"
-
-
-# ---------------------------------------------------------------------------
-# Structural assertions (expanded smoke coverage).
-# ---------------------------------------------------------------------------
-
-
-def test_top_level_keys(parsed: dict[str, object]) -> None:
-    """Top-level keys are exactly {queues, paths}: required-check evaluation
-    is delegated to branch protection, so no required_checks section ships
-    in this YAML."""
-    assert set(parsed.keys()) == {"queues", "paths"}, (
-        f"Unexpected top-level keys: {set(parsed.keys())}"
-    )
-
-
-def test_queues_is_list_of_six_strings(parsed: dict[str, object]) -> None:
-    """`queues` is a list of length 6, all production queue names."""
-    queues = parsed["queues"]
-    assert isinstance(queues, list)
-    assert len(queues) == 6, f"Expected 6 queues, got {len(queues)}: {queues}"
-    assert all(isinstance(q, str) for q in queues), f"Non-string queue entry in {queues}"
-
-
-def test_no_required_checks_section(parsed: dict[str, object]) -> None:
-    """No required_checks section: branch protection is the single source of
-    truth for which checks gate a merge."""
-    assert "required_checks" not in parsed, (
-        "required_checks must not be present — branch protection is the "
-        "source of truth. Configure required checks via Settings → Branches "
-        "→ Branch protection rules instead."
-    )
-
-
-def test_paths_reference_only_known_queues(parsed: dict[str, object]) -> None:
-    """Every queue referenced in any `paths[*].queues` list exists in the top-level queues list."""
-    known = set(parsed["queues"])
-    for entry in parsed["paths"]:
-        assert isinstance(entry, dict), f"paths entry not a dict: {entry}"
-        assert "path" in entry and "queues" in entry, f"paths entry missing keys: {entry}"
-        unknown = set(entry["queues"]) - known
-        assert not unknown, (
-            f"paths entry {entry['path']!r} references unknown queues: {unknown}"
-        )
-
-
-
-
-def test_production_queues_present(parsed: dict[str, object]) -> None:
+def test_production_queues_present() -> None:
     """All six RFC §4.1 production queues are present in the queues list."""
+    payload = load_local(_YAML_PATH)
     expected = {
         "hipdnn",
         "miopen-provider",
@@ -106,6 +45,15 @@ def test_production_queues_present(parsed: dict[str, object]) -> None:
         "fusilli-provider",
         "integration-tests",
     }
-    assert expected.issubset(set(parsed["queues"])), (
-        f"Missing production queues: {expected - set(parsed['queues'])}"
-    )
+
+    assert set(payload["queues"]) == expected
+
+
+def test_comments_do_not_point_to_a_dedicated_validator_workflow() -> None:
+    """D-07 binds validation to mq-test.yml, not mq-config-validate.yml."""
+    yaml_text = _YAML_PATH.read_text(encoding="utf-8")
+    test_text = pathlib.Path(__file__).read_text(encoding="utf-8")
+
+    assert "mq-config-validate.yml" not in yaml_text
+    assert "mq-config-validate workflow" not in yaml_text.lower()
+    assert "dedicated mq-config-validate" not in test_text.lower()
