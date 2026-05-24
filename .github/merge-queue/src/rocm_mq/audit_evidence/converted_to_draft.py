@@ -10,6 +10,7 @@ from rocm_mq.audit_evidence._base import (
     AuditResult,
     create_audit_pr,
     post_merge_command,
+    wait_for_mq_labels,
     run_audit_scenario,
     run_driver_cli,
     run_gh_pr_ready_undo,
@@ -50,7 +51,9 @@ def _prepare_pr(client: Any, owner: str, repo: str) -> tuple[int, str, str]:
 
 def _tamper(client: Any, owner: str, repo: str, pr_number: int) -> dict[str, Any]:
     command_id = post_merge_command(client, owner, repo, pr_number)
+    labels_before = wait_for_mq_labels(client, owner, repo, pr_number)
     observed = run_gh_pr_ready_undo(owner, repo, pr_number)
+    observed["labels_before_tamper"] = list(labels_before)
     observed["merge_command_comment_id"] = command_id
     return observed
 

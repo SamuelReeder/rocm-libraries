@@ -462,6 +462,28 @@ def post_merge_command(client: Any, owner: str, repo: str, pr_number: int) -> in
     return int(resp.parsed_data.id)
 
 
+def wait_for_mq_labels(
+    client: Any,
+    owner: str,
+    repo: str,
+    pr_number: int,
+    *,
+    timeout_s: float = 120.0,
+    interval_s: float = 5.0,
+) -> tuple[str, ...]:
+    """Wait until the handler has applied at least one mq:* label to the PR."""
+
+    return poll_pr_state(
+        client,
+        owner,
+        repo,
+        pr_number,
+        predicate=lambda c, o, r, n: remaining_mq_labels(c, o, r, n),
+        timeout_s=timeout_s,
+        interval_s=interval_s,
+    )
+
+
 def run_gh_pr_ready_undo(owner: str, repo: str, pr_number: int) -> dict[str, Any]:
     """Convert a PR to draft with gh CLI; REST has no equivalent endpoint."""
 
@@ -499,13 +521,24 @@ def _create_audit_branch_with_file(
     develop_tip = str(target.sha)
     client.rest.git.create_ref(owner, repo, ref=f"refs/heads/{branch}", sha=develop_tip)
     encoded = base64.b64encode(file_content.encode("utf-8")).decode("ascii")
+    existing_sha: str | None = None
+    try:
+        content_resp = client.rest.repos.get_content(owner, repo, file_path, ref=branch)
+        existing_sha = str(getattr(content_resp.parsed_data, "sha", "")) or None
+    except Exception:
+        existing_sha = None
+    file_kwargs: dict[str, Any] = {
+        "message": f"[audit {scenario_id}] seed {file_path}",
+        "content": encoded,
+        "branch": branch,
+    }
+    if existing_sha:
+        file_kwargs["sha"] = existing_sha
     client.rest.repos.create_or_update_file_contents(
         owner,
         repo,
         file_path,
-        message=f"[audit {scenario_id}] seed {file_path}",
-        content=encoded,
-        branch=branch,
+        **file_kwargs,
     )
     return branch
 
@@ -525,5 +558,6 @@ __all__ = [
     "run_audit_scenario",
     "run_driver_cli",
     "run_gh_pr_ready_undo",
+    "wait_for_mq_labels",
     "workflow_run_urls",
 ]

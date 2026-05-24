@@ -11,6 +11,7 @@ from rocm_mq.audit_evidence._base import (
     AuditResult,
     create_audit_pr,
     post_merge_command,
+    wait_for_mq_labels,
     run_audit_scenario,
     run_driver_cli,
 )
@@ -50,6 +51,7 @@ def _prepare_pr(client: Any, owner: str, repo: str) -> tuple[int, str, str]:
 
 def _tamper(client: Any, owner: str, repo: str, pr_number: int) -> dict[str, Any]:
     command_id = post_merge_command(client, owner, repo, pr_number)
+    labels_before = wait_for_mq_labels(client, owner, repo, pr_number)
     ref_resp = client.rest.git.get_ref(owner, repo, "heads/develop")
     ref_obj = ref_resp.parsed_data
     target = getattr(ref_obj, "object_", None) or ref_obj.object
@@ -61,6 +63,7 @@ def _tamper(client: Any, owner: str, repo: str, pr_number: int) -> dict[str, Any
     return {
         "operation": "change_base",
         "base": base_branch,
+        "labels_before_tamper": list(labels_before),
         "merge_command_comment_id": command_id,
     }
 
