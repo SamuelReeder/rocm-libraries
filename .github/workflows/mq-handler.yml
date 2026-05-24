@@ -128,6 +128,9 @@ jobs:
     # RFC §4.3.1 real-time audit for pull_request_target tamper events.
     # This privileged job runs only trusted develop code; it must never
     # check out PR-head content or use PR-head ref/SHA expressions.
+    # AUDIT-02's checkout-lint implementation is explicitly deferred by
+    # CONTEXT D-10: Phase 04A preserves the no-PR-head-checkout invariant
+    # in this workflow but does not add a lint workflow or repo-wide scanner.
     if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     timeout-minutes: 2
