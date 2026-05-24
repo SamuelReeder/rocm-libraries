@@ -27,7 +27,7 @@ CLI usage:
     python -m rocm_mq process-cycle --dry-run --fake --repo owner/repo
     python -m rocm_mq process-cycle --repo owner/repo   # uses GITHUB_TOKEN
     python -m rocm_mq handle --repo owner/repo --event-path $GITHUB_EVENT_PATH
-    python -m rocm_mq audit
+    python -m rocm_mq audit --repo owner/repo --event-path $GITHUB_EVENT_PATH
     python -m rocm_mq preflight --repo owner/repo
 
 The ``--fake`` flag injects ``tests.gh_fake.FakeGitHub`` so the full cycle
@@ -49,9 +49,9 @@ with four subparsers (``process-cycle``, ``handle``, ``audit``,
 ``preflight``); each registers a per-subcommand ``set_defaults(func=run_*)``
 callable so ``main()`` reduces to ``args.func(args)`` wrapped in the
 existing traceback-printing try/except. ``handle`` dispatches into
-``rocm_mq.cmd_handle.main``. ``preflight`` dispatches into
-``rocm_mq.preflight.main``. ``audit`` is a stub pending RFC §4.3.1
-tamper-matrix implementation.
+``rocm_mq.cmd_handle.main``. ``audit`` dispatches into
+``rocm_mq.cmd_audit.main``. ``preflight`` dispatches into
+``rocm_mq.preflight.main``.
 """
 
 from __future__ import annotations
@@ -298,8 +298,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
       - ``handle``: dispatch a /merge or /dequeue issue_comment event.
         Flags: ``--repo OWNER/REPO``,
         ``--event-path PATH`` (defaults to ``$GITHUB_EVENT_PATH``).
-      - ``audit``: RFC §4.3.1 tamper-matrix audit (not yet implemented).
-        No flags.
+      - ``audit``: RFC §4.3.1 tamper-matrix audit. Flags:
+        ``--repo OWNER/REPO``,
+        ``--event-path PATH`` (defaults to ``$GITHUB_EVENT_PATH``).
       - ``preflight``: workflow pre-flight invariant check. Flags:
         ``--repo OWNER/REPO``.
 
@@ -371,10 +372,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p_handle.set_defaults(func=run_handle)
 
-    # audit — RFC §4.3.1 tamper-matrix audit (not yet implemented).
+    # audit — dispatches into rocm_mq.cmd_audit.
     p_audit = sub.add_parser(
         "audit",
-        help="RFC §4.3.1 tamper-matrix audit (not yet implemented).",
+        help="Run the RFC §4.3.1 merge-queue tamper audit.",
+    )
+    p_audit.add_argument(
+        "--repo",
+        default=os.environ.get("GITHUB_REPOSITORY", ""),
+        help="GitHub repository in OWNER/REPO form.",
+    )
+    p_audit.add_argument(
+        "--event-path",
+        default=os.environ.get("GITHUB_EVENT_PATH", ""),
+        help=(
+            "Path to the GHA event JSON (pull_request_target payload). "
+            "Defaults to $GITHUB_EVENT_PATH (set automatically in GHA runners)."
+        ),
     )
     p_audit.set_defaults(func=run_audit)
 
@@ -538,19 +552,13 @@ def run_handle(args: argparse.Namespace) -> int:
 
 
 def run_audit(args: argparse.Namespace) -> int:
-    """RFC §4.3.1 tamper-matrix audit (not yet implemented).
+    """Dispatch the ``audit`` subcommand into ``rocm_mq.cmd_audit.main``."""
 
-    Returns 0 cleanly so mq-handler.yml's audit job slot can be authored
-    and exercised end-to-end ahead of the implementation, but prints a
-    structured stderr note so operators reading the workflow run log do not
-    mistake the no-op for "audit logic ran".
-    """
-    print(
-        "audit: not yet implemented; RFC §4.3.1 tamper-matrix logic "
-        "(label tamper, status tamper, comment tamper) pending.",
-        file=sys.stderr,
+    from rocm_mq.cmd_audit import main as _audit_main
+
+    return _audit_main(
+        [f"--repo={args.repo}", f"--event-path={args.event_path}"]
     )
-    return 0
 
 
 def run_preflight(args: argparse.Namespace) -> int:
