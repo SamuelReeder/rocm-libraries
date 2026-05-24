@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from rocm_mq import cmd_handle
+from rocm_mq import protected_paths
 from rocm_mq.state import AppIdentity, MergeQueueConfig
 from tests.gh_fake import FakeGitHub, FakePR, FakeRepoState
 
@@ -209,6 +210,28 @@ class TestIsSelfBootstrap:
 
     def test_empty_list(self) -> None:
         assert cmd_handle.is_self_bootstrap([]) == []
+
+    def test_normalized_adversarial_paths_are_hits(self) -> None:
+        paths = [
+            ".GitHub/workflows/foo.yml",
+            "./.github/merge-queue/x.py",
+            ".github//workflows/foo.yml",
+        ]
+
+        assert cmd_handle.is_self_bootstrap(paths) == paths
+
+    def test_returns_helper_hits_in_original_order(self) -> None:
+        paths = [
+            "projects/hipdnn/src/foo.cpp",
+            ".GitHub/workflows/foo.yml",
+            "docs/readme.md",
+            "./.github/merge-queue/x.py",
+        ]
+
+        assert cmd_handle.is_self_bootstrap(paths) == [
+            ".GitHub/workflows/foo.yml",
+            "./.github/merge-queue/x.py",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +665,69 @@ class TestMainSelfBootstrapRejection:
         comments = fake_state.comments_store.get(7, {})
         bodies = list(comments.values())
         assert any("path_to_queues.yml" in body for body in bodies)
+
+    def test_normalized_protected_path_rejects_before_queue_routing(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: FakeGitHub,
+        fake_state: FakeRepoState,
+        hipdnn_config: MergeQueueConfig,
+    ) -> None:
+        _seed_pr(fake_state, files=[".GitHub/workflows/foo.yml"])
+        fake_state.collaborators["alice"] = "write"
+
+        def fail_if_routed(*_args: object, **_kwargs: object) -> frozenset[str]:
+            raise AssertionError("queues_for_paths must not run for protected paths")
+
+        monkeypatch.setattr(cmd_handle, "queues_for_paths", fail_if_routed, raising=True)
+
+        rc = _run_main(
+            tmp_path,
+            monkeypatch,
+            payload=_make_event_payload(),
+            fake_client=fake_client,
+            config=hipdnn_config,
+        )
+
+        assert rc == 0
+        assert "mq:queued" not in fake_state.prs[7].labels
+
+    def test_generated_source_rejects_before_queue_routing(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: FakeGitHub,
+        fake_state: FakeRepoState,
+        hipdnn_config: MergeQueueConfig,
+    ) -> None:
+        source_path = "tools/render-mq-workflow.py"
+        _seed_pr(fake_state, files=[source_path])
+        fake_state.collaborators["alice"] = "write"
+        monkeypatch.setattr(
+            protected_paths,
+            "GENERATED_PROTECTED_PATH_PAIRS",
+            ((source_path, ".github/workflows/generated.yml"),),
+            raising=True,
+        )
+
+        def fail_if_routed(*_args: object, **_kwargs: object) -> frozenset[str]:
+            raise AssertionError("queues_for_paths must not run for generated protected paths")
+
+        monkeypatch.setattr(cmd_handle, "queues_for_paths", fail_if_routed, raising=True)
+
+        rc = _run_main(
+            tmp_path,
+            monkeypatch,
+            payload=_make_event_payload(),
+            fake_client=fake_client,
+            config=hipdnn_config,
+        )
+
+        assert rc == 0
+        assert "mq:queued" not in fake_state.prs[7].labels
+        comments = fake_state.comments_store.get(7, {})
+        assert any(source_path in body for body in comments.values())
 
 
 class TestMainUnmappedPath:
