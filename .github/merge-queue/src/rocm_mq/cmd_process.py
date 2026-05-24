@@ -29,6 +29,7 @@ CLI usage:
     python -m rocm_mq handle --repo owner/repo --event-path $GITHUB_EVENT_PATH
     python -m rocm_mq audit --repo owner/repo --event-path $GITHUB_EVENT_PATH
     python -m rocm_mq preflight --repo owner/repo
+    python -m rocm_mq validate-config --path path_to_queues.yml
 
 The ``--fake`` flag injects ``tests.gh_fake.FakeGitHub`` so the full cycle
 runs against an in-memory substitute with no network access — the DOG-01
@@ -45,13 +46,14 @@ PURE-09 compliance: this module imports ``rocm_mq.snapshot`` /
 PURE-09 lint excludes it from the pure-layer set.
 
 ``_parse_args`` uses ``add_subparsers(dest="subcommand", required=True)``
-with four subparsers (``process-cycle``, ``handle``, ``audit``,
-``preflight``); each registers a per-subcommand ``set_defaults(func=run_*)``
-callable so ``main()`` reduces to ``args.func(args)`` wrapped in the
-existing traceback-printing try/except. ``handle`` dispatches into
-``rocm_mq.cmd_handle.main``. ``audit`` dispatches into
-``rocm_mq.cmd_audit.main``. ``preflight`` dispatches into
-``rocm_mq.preflight.main``.
+with five subparsers (``process-cycle``, ``handle``, ``audit``,
+``preflight``, ``validate-config``); each registers a per-subcommand
+``set_defaults(func=run_*)`` callable so ``main()`` reduces to
+``args.func(args)`` wrapped in the existing traceback-printing try/except.
+``handle`` dispatches into ``rocm_mq.cmd_handle.main``. ``audit`` dispatches
+into ``rocm_mq.cmd_audit.main``. ``preflight`` dispatches into
+``rocm_mq.preflight.main``. ``validate-config`` dispatches into the local-only
+``rocm_mq.config_validator.main``.
 """
 
 from __future__ import annotations
@@ -287,7 +289,7 @@ def _build_fake_client() -> Any:
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Build the argparse Namespace using a subparser tree.
 
-    Uses ``add_subparsers(dest="subcommand", required=True)`` with four
+    Uses ``add_subparsers(dest="subcommand", required=True)`` with five
     registered subcommands, each carrying its own isolated flag namespace
     and a ``set_defaults(func=...)`` that ``main()`` invokes as
     ``args.func(args)``.
@@ -303,6 +305,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ``--event-path PATH`` (defaults to ``$GITHUB_EVENT_PATH``).
       - ``preflight``: workflow pre-flight invariant check. Flags:
         ``--repo OWNER/REPO``.
+      - ``validate-config``: local path_to_queues.yml validator. Flags:
+        ``--path PATH``.
 
     Backward-compat note: existing internal test calls of the form
     ``main(["process-cycle", ...])`` continue to work because
@@ -315,8 +319,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description=(
             "Federated Merge Queue — controller CLI for the processor "
             "cycle (process-cycle), the command handler (handle), the "
-            "tamper-audit job (audit), and the workflow pre-flight check "
-            "(preflight)."
+            "tamper-audit job (audit), the workflow pre-flight check "
+            "(preflight), and the local config validator (validate-config)."
         ),
     )
     sub = parser.add_subparsers(dest="subcommand", required=True)
@@ -404,6 +408,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p_preflight.set_defaults(func=run_preflight)
 
+    # validate-config — local-only validator for path_to_queues.yml.
+    p_validate = sub.add_parser(
+        "validate-config",
+        help="Validate path_to_queues.yml locally.",
+    )
+    p_validate.add_argument(
+        "--path",
+        required=True,
+        help="Path to path_to_queues.yml.",
+    )
+    p_validate.set_defaults(func=run_validate_config)
+
     return parser.parse_args(argv)
 
 
@@ -480,8 +496,9 @@ def run_process_cycle(args: argparse.Namespace) -> int:
     #
     # Schema-graph validation (every queue named in a path entry must exist
     # in queues:, upstream/downstream closure) is handled by
-    # mq-config-validate.yml; this loader is non-validating beyond the
-    # "root is a mapping" sanity check.
+    # rocm_mq.config_validator under the existing mq-test.yml package tests;
+    # this runtime loader is non-validating beyond the "root is a mapping"
+    # sanity check.
     config: MergeQueueConfig
     if args.fake:
         from rocm_mq.gh import resolve_app_identity
@@ -587,6 +604,14 @@ def run_preflight(args: argparse.Namespace) -> int:
     return _preflight_main([f"--repo={args.repo}"])
 
 
+def run_validate_config(args: argparse.Namespace) -> int:
+    """Dispatch the local ``validate-config`` subcommand into config_validator."""
+
+    from rocm_mq.config_validator import main as _validate_main
+
+    return _validate_main([f"--path={args.path}"])
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint — parses argv and dispatches to the registered subcommand.
 
@@ -645,5 +670,6 @@ __all__ = [
     "run_audit",
     "run_handle",
     "run_preflight",
+    "run_validate_config",
     "run_process_cycle",
 ]
