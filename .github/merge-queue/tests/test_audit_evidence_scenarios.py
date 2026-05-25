@@ -11,7 +11,6 @@ import pytest
 
 from tests.gh_fake import FakeGitHub, FakePR, FakeRepoState
 
-
 SCENARIOS: tuple[tuple[str, str, str, str], ...] = (
     (
         "rocm_mq.audit_evidence.labels_at_open",
@@ -68,7 +67,9 @@ def _tamper(_client: Any, _owner: str, _repo: str, _pr_number: int) -> dict[str,
     return {"operation": "tamper-applied"}
 
 
-def _inject_success(state: FakeRepoState, *, family: str, detail: str, actor: str = "alice"):
+def _inject_success(
+    state: FakeRepoState, *, family: str, detail: str, actor: str = "alice"
+):
     def inject(pr_number: int) -> None:
         pr = state.prs[pr_number]
         pr.labels.clear()
@@ -93,7 +94,7 @@ def test_driver_modules_expose_stable_contract(
 ) -> None:
     module = importlib.import_module(module_name)
 
-    assert module.SCENARIO_ID == scenario_id
+    assert scenario_id == module.SCENARIO_ID
     assert module.EXPECTED["family"] == family
     assert module.EXPECTED["detail"] == detail
     assert module.EXPECTED["activation_state"] == "error"

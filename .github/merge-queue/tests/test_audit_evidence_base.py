@@ -21,7 +21,6 @@ from rocm_mq.audit_evidence._base import (
 )
 from tests.gh_fake import FakeGitHub, FakePR, FakeRepoState
 
-
 _AUDIT_KEYS: frozenset[str] = frozenset(
     {
         "scenario_id",
@@ -89,7 +88,9 @@ def test_emit_result_writes_sorted_json_to_default_audit_runs_dir(
     assert payload["scenario_id"] == "audit_label_added"
 
 
-def test_emit_result_accepts_explicit_output_dir_and_creates_parents(tmp_path: Path) -> None:
+def test_emit_result_accepts_explicit_output_dir_and_creates_parents(
+    tmp_path: Path,
+) -> None:
     output_dir = tmp_path / "nested" / "audit-runs"
     output = emit_result(_make_result(), output_dir=output_dir)
 
@@ -174,7 +175,10 @@ def test_observation_helpers_read_fake_pr_labels_comments_and_statuses() -> None
     }
     client = FakeGitHub(state)
 
-    assert remaining_mq_labels(client, "owner", "repo", 42) == ("mq:hipdnn", "mq:queued")
+    assert remaining_mq_labels(client, "owner", "repo", 42) == (
+        "mq:hipdnn",
+        "mq:queued",
+    )
     assert audit_comments_matching(
         client,
         "owner",

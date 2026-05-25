@@ -23,7 +23,6 @@ import pytest
 from rocm_mq.audit_evidence import aggregator
 from rocm_mq.audit_evidence._base import AuditResult
 
-
 _ALL_SCENARIOS = (
     "audit_labels_at_open",
     "audit_label_added",
@@ -146,7 +145,11 @@ def test_latest_passing_picks_latest_pass_and_ignores_newer_failure() -> None:
 
 def test_latest_passing_returns_none_when_only_failures_exist() -> None:
     latest = aggregator.latest_passing(
-        {"audit_label_removed": [dataclasses.asdict(_make_result("audit_label_removed", passed=False))]}
+        {
+            "audit_label_removed": [
+                dataclasses.asdict(_make_result("audit_label_removed", passed=False))
+            ]
+        }
     )
     assert latest == {"audit_label_removed": None}
 
@@ -189,12 +192,16 @@ def test_render_markdown_passing_run_contains_required_evidence_fields() -> None
     assert "post-open-add" in rendered
     assert "remaining_mq_labels" in rendered
     assert "merge-queue/active" in rendered
-    assert "https://github.com/SamuelReeder/rocm-libraries/actions/runs/123456" in rendered
+    assert (
+        "https://github.com/SamuelReeder/rocm-libraries/actions/runs/123456" in rendered
+    )
     assert "labels cleared and activation status set to error" in rendered
     assert "audit-runs/" in rendered
 
 
-def test_main_writes_requested_output_and_exits_zero_with_no_passes(tmp_path: Path) -> None:
+def test_main_writes_requested_output_and_exits_zero_with_no_passes(
+    tmp_path: Path,
+) -> None:
     input_dir = tmp_path / "runs"
     input_dir.mkdir()
     output_md = tmp_path / "AUDIT-RESULTS.md"

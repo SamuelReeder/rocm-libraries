@@ -10,9 +10,9 @@ from rocm_mq.audit_evidence._base import (
     AuditResult,
     create_audit_pr,
     post_merge_command,
-    wait_for_mq_labels,
     run_audit_scenario,
     run_driver_cli,
+    wait_for_mq_labels,
 )
 
 SCENARIO_ID = "audit_label_removed"

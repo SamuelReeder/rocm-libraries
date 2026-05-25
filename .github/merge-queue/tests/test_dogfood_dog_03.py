@@ -28,7 +28,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import yaml
 
 from rocm_mq.dogfood import dog_03
 from tests.gh_fake import FakeGitHub, FakePR, FakeRepoState
@@ -140,9 +139,7 @@ class _DogfoodFake(FakeGitHub):
         branch: str = "",
         **_: Any,
     ) -> SimpleNamespace:
-        self._created_files.append(
-            {"path": path, "branch": branch, "message": message}
-        )
+        self._created_files.append({"path": path, "branch": branch, "message": message})
         return SimpleNamespace(
             parsed_data=SimpleNamespace(
                 commit=SimpleNamespace(sha=f"commit_{len(self._created_files)}")
@@ -161,9 +158,7 @@ class _DogfoodFake(FakeGitHub):
         """Return the path_to_queues.yml payload, base64-encoded as the API
         delivers it (config.load_from_develop base64-decodes before parsing).
         """
-        encoded = base64.b64encode(self._yaml_payload.encode("utf-8")).decode(
-            "ascii"
-        )
+        encoded = base64.b64encode(self._yaml_payload.encode("utf-8")).decode("ascii")
         return SimpleNamespace(
             parsed_data=SimpleNamespace(content=encoded, encoding="base64")
         )
@@ -274,9 +269,7 @@ def test_run_scenario_happy_path_returns_passed_result(
     assert result.pr_number == 4000
     # The PR title prefix (recorded as the seeded pull) carries the canary
     # title-substring trigger.
-    assert any(
-        "[dogfood-ci-fail]" in str(p["title"]) for p in client._created_pulls
-    )
+    assert any("[dogfood-ci-fail]" in str(p["title"]) for p in client._created_pulls)
     # Seed file is under dogfood/ so the canary workflow's path filter fires.
     seeded_paths = [f["path"] for f in client._created_files]
     assert any(p.startswith("dogfood/") for p in seeded_paths)
@@ -300,9 +293,7 @@ def test_run_scenario_failure_mode_when_reason_missing_check_name(
     with develop", for example) must NOT be accepted as DOG-03 evidence.
     """
     _patch_timing(monkeypatch)
-    eject_body = (
-        "<!-- rocm-mq-status -->\n## Ejected: merge conflict with develop\n"
-    )
+    eject_body = "<!-- rocm-mq-status -->\n## Ejected: merge conflict with develop\n"
     client = _DogfoodFake(fake_state, eject_comment_body=eject_body)
 
     with pytest.raises(TimeoutError):
@@ -324,10 +315,7 @@ def test_run_scenario_emits_json_with_d04_schema_fields(
 ) -> None:
     """Per-run JSON includes every D-04 schema field."""
     _patch_timing(monkeypatch)
-    eject_body = (
-        "<!-- rocm-mq-status -->\n"
-        f"Ejected: `{_CANARY_CHECK_NAME}` failed\n"
-    )
+    eject_body = "<!-- rocm-mq-status -->\n" f"Ejected: `{_CANARY_CHECK_NAME}` failed\n"
     client = _DogfoodFake(fake_state, eject_comment_body=eject_body)
 
     dog_03.run_scenario(
@@ -369,9 +357,7 @@ def test_run_scenario_timeline_contains_required_checks_failed_event(
     the canary check (RESEARCH.md Area #12 event vocabulary).
     """
     _patch_timing(monkeypatch)
-    eject_body = (
-        f"<!-- rocm-mq-status -->\nEjected: `{_CANARY_CHECK_NAME}` failed\n"
-    )
+    eject_body = f"<!-- rocm-mq-status -->\nEjected: `{_CANARY_CHECK_NAME}` failed\n"
     client = _DogfoodFake(fake_state, eject_comment_body=eject_body)
 
     result = dog_03.run_scenario(
@@ -413,6 +399,7 @@ def test_dog_03_canary_check_name_pins_load_bearing_prefix() -> None:
     module, not in path_to_queues.yml; this test guards against the
     constant drifting out of alignment with the canary workflow."""
     from rocm_mq.dogfood.dog_03 import _CANARY_CHECK_NAME
+
     assert "mq-dogfood-canary" in _CANARY_CHECK_NAME, (
         f"_CANARY_CHECK_NAME={_CANARY_CHECK_NAME!r} no longer contains the "
         "'mq-dogfood-canary' prefix; update dog_03 driver or re-name the "

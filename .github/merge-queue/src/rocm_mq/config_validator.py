@@ -74,7 +74,9 @@ def load_local(path: Path) -> dict[str, Any]:
 def validate_path_to_queues(
     payload: Mapping[str, Any],
     *,
-    generated_protected_path_pairs: Iterable[tuple[str, str]] = GENERATED_PROTECTED_PATH_PAIRS,
+    generated_protected_path_pairs: Iterable[
+        tuple[str, str]
+    ] = GENERATED_PROTECTED_PATH_PAIRS,
 ) -> tuple[ValidationError, ...]:
     """Return every semantic error in a ``path_to_queues.yml`` payload.
 
@@ -396,16 +398,15 @@ def _validate_trust_boundaries(
                 )
             )
 
+
 def _is_github_root_route(path: str) -> bool:
     normalized = path.replace("\\", "/")
     while normalized.startswith("/") or normalized.startswith("./"):
-        if normalized.startswith("/"):
-            normalized = normalized[1:]
-        else:
-            normalized = normalized[2:]
+        normalized = normalized[1:] if normalized.startswith("/") else normalized[2:]
     while "//" in normalized:
         normalized = normalized.replace("//", "/")
     return normalized.casefold().startswith(".github/")
+
 
 def _sorted_detail(label: str, values: Iterable[str]) -> tuple[str, ...]:
     return tuple(f"{label}={value}" for value in sorted(values))

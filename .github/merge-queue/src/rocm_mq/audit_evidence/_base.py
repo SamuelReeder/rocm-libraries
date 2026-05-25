@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
+import json
 import os
 import secrets
 import subprocess
-from datetime import UTC, datetime
-import dataclasses
-import json
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 _DEFAULT_OUTPUT_DIR = Path(".planning/phases/04A-audit-validator/audit-runs")
 _STATUS_MARKER = "<!-- rocm-mq-status -->"
@@ -175,9 +175,7 @@ def workflow_run_urls(
     parsed = getattr(resp, "parsed_data", None)
     runs = getattr(parsed, "workflow_runs", ()) or ()
     return tuple(
-        str(url)
-        for run in runs
-        if (url := getattr(run, "html_url", None)) is not None
+        str(url) for run in runs if (url := getattr(run, "html_url", None)) is not None
     )
 
 
@@ -473,14 +471,17 @@ def wait_for_mq_labels(
 ) -> tuple[str, ...]:
     """Wait until the handler has applied at least one mq:* label to the PR."""
 
-    return poll_pr_state(
-        client,
-        owner,
-        repo,
-        pr_number,
-        predicate=lambda c, o, r, n: remaining_mq_labels(c, o, r, n),
-        timeout_s=timeout_s,
-        interval_s=interval_s,
+    return cast(
+        tuple[str, ...],
+        poll_pr_state(
+            client,
+            owner,
+            repo,
+            pr_number,
+            predicate=lambda c, o, r, n: remaining_mq_labels(c, o, r, n),
+            timeout_s=timeout_s,
+            interval_s=interval_s,
+        ),
     )
 
 

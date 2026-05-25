@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
@@ -68,10 +69,19 @@ def test_production_yaml_loads_and_validates_cleanly() -> None:
         ({"queues": "hipdnn", "paths": []}, {"shape.queues_not_list"}),
         ({"queues": ["hipdnn", 7], "paths": []}, {"shape.queue_not_string"}),
         ({"queues": [], "paths": "projects/hipdnn/"}, {"shape.paths_not_list"}),
-        ({"queues": [], "paths": ["projects/hipdnn/"]}, {"shape.path_entry_not_mapping"}),
+        (
+            {"queues": [], "paths": ["projects/hipdnn/"]},
+            {"shape.path_entry_not_mapping"},
+        ),
         ({"queues": [], "paths": [{"queues": []}]}, {"shape.path_missing"}),
-        ({"queues": [], "paths": [{"path": 7, "queues": []}]}, {"shape.path_not_string"}),
-        ({"queues": [], "paths": [{"path": "projects/hipdnn/"}]}, {"shape.entry_queues_missing"}),
+        (
+            {"queues": [], "paths": [{"path": 7, "queues": []}]},
+            {"shape.path_not_string"},
+        ),
+        (
+            {"queues": [], "paths": [{"path": "projects/hipdnn/"}]},
+            {"shape.entry_queues_missing"},
+        ),
         (
             {"queues": [], "paths": [{"path": "projects/hipdnn/", "queues": "hipdnn"}]},
             {"shape.entry_queues_not_list"},

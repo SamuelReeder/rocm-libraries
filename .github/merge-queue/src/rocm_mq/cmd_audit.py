@@ -241,8 +241,7 @@ def _live_state_requires_eject(
         return True
     if classification.detail == "base-ref-change":
         return (
-            _has_mq_label(live_labels, config)
-            and _live_base_ref(live_pr) != "develop"
+            _has_mq_label(live_labels, config) and _live_base_ref(live_pr) != "develop"
         )
     if classification.detail == "draft-conversion":
         return _has_mq_label(live_labels, config) and bool(
@@ -403,10 +402,11 @@ def _payload_label_names(pull_request: dict[str, Any]) -> tuple[str, ...]:
     labels = pull_request.get("labels") or ()
     names: list[str] = []
     for label in labels:
-        if isinstance(label, dict):
-            name = label.get("name")
-        else:
-            name = getattr(label, "name", None)
+        name = (
+            label.get("name")
+            if isinstance(label, dict)
+            else getattr(label, "name", None)
+        )
         if name is not None:
             names.append(str(name))
     return tuple(names)
@@ -417,12 +417,14 @@ def _has_mq_label(labels: tuple[str, ...], config: MergeQueueConfig) -> bool:
 
 
 def _optional_int(value: object) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
 
 
 __all__ = ["main"]

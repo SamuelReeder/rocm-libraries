@@ -150,7 +150,7 @@ def run_scenario(
     #    (RFC §4.6 activation step). The first-commit-into-develop pattern
     #    is documented as an accepted artifact per T-03-11-01 (threat model).
     seed_content_b64 = base64.b64encode(
-        f"seed-variant-A: chosen at dogfood seed time {started}\n".encode("utf-8")
+        f"seed-variant-A: chosen at dogfood seed time {started}\n".encode()
     ).decode("ascii")
     # On re-runs the seed file may already exist on develop; fetch its sha so
     # the contents API treats this as an update rather than a (failing) create.

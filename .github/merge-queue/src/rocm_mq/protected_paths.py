@@ -16,7 +16,8 @@ by ``.github/merge-queue/.gitignore``; it is not an unprotected-source bypass.
 from __future__ import annotations
 
 import fnmatch
-from typing import Final, Iterable
+from collections.abc import Iterable
+from typing import Final
 
 from rocm_mq.config import SELF_BOOTSTRAP_PATHS
 
@@ -33,10 +34,7 @@ def _normalize_for_compare(path: str) -> str:
     """
     normalized = path.replace("\\", "/")
     while normalized.startswith("/") or normalized.startswith("./"):
-        if normalized.startswith("/"):
-            normalized = normalized[1:]
-        else:
-            normalized = normalized[2:]
+        normalized = normalized[1:] if normalized.startswith("/") else normalized[2:]
     while "//" in normalized:
         normalized = normalized.replace("//", "/")
     return normalized.casefold()

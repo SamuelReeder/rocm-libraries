@@ -182,9 +182,7 @@ class _DogfoodFake(FakeGitHub):
         elif body.strip() == "/merge" and self._bypass_short_circuit:
             # Simulate the BUG path: handler applied mq:queued anyway, even
             # though the queue set is empty. The driver must catch this.
-            self.rest.issues.add_labels(
-                owner, repo, issue_number, labels=["mq:queued"]
-            )
+            self.rest.issues.add_labels(owner, repo, issue_number, labels=["mq:queued"])
             self._base_create_comment(
                 owner, repo, issue_number, body=self._REJECTION_BODY
             )
@@ -199,9 +197,7 @@ class _GitNS:
         return SimpleNamespace(
             parsed_data=SimpleNamespace(
                 ref=f"refs/{ref}",
-                object=SimpleNamespace(
-                    sha=self._refs.get(ref, "develop_initial_tip")
-                ),
+                object=SimpleNamespace(sha=self._refs.get(ref, "develop_initial_tip")),
             )
         )
 
@@ -312,7 +308,9 @@ def test_run_scenario_failure_when_rejection_comment_missing(
 
 def test_dogfood_runs_directory_has_gitkeep() -> None:
     """The dogfood-runs/ directory placeholder must exist for plan 03-11."""
-    p = Path(
-        "/home/AMD/sareeder/worktrees/rocmlibs-merge-queue-rfc/.planning/phases/03-handler-processor-on-fork/dogfood-runs/.gitkeep"
+    repo_root = Path(__file__).resolve().parents[3]
+    p = (
+        repo_root
+        / ".planning/phases/03-handler-processor-on-fork/dogfood-runs/.gitkeep"
     )
     assert p.exists(), f"missing .gitkeep at {p}"

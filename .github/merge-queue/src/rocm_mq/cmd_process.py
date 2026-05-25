@@ -200,9 +200,7 @@ def process_cycle(
     # — each cycle's summary stands alone.
     # Default path matches the upload-artifact step's `path:` input in
     # .github/workflows/mq-processor.yml.
-    cycle_summary_path = os.environ.get(
-        "MQ_CYCLE_SUMMARY_PATH", "cycle-summary.md"
-    )
+    cycle_summary_path = os.environ.get("MQ_CYCLE_SUMMARY_PATH", "cycle-summary.md")
     cycle_summary_file = Path(cycle_summary_path)
     # Create the parent dir if missing — the workflow's working-directory
     # is .github/merge-queue, so the default cycle-summary.md lands there
@@ -271,7 +269,7 @@ def _build_fake_client() -> Any:
         print(
             "error: --fake mode requires the tests/ directory on the Python "
             "import path. The wheel build excludes tests/ (pyproject.toml "
-            "`packages = [\"src/rocm_mq\"]`), so --fake only works from an "
+            '`packages = ["src/rocm_mq"]`), so --fake only works from an '
             "editable install (`pip install -e .[dev]`). Re-install in "
             "editable mode or drop --fake to use the real GitHub API.",
             file=sys.stderr,
@@ -563,9 +561,7 @@ def run_handle(args: argparse.Namespace) -> int:
     # ``process-cycle`` subcommand does not need.
     from rocm_mq.cmd_handle import main as _handle_main
 
-    return _handle_main(
-        [f"--repo={args.repo}", f"--event-path={args.event_path}"]
-    )
+    return _handle_main([f"--repo={args.repo}", f"--event-path={args.event_path}"])
 
 
 def run_audit(args: argparse.Namespace) -> int:
@@ -573,9 +569,7 @@ def run_audit(args: argparse.Namespace) -> int:
 
     from rocm_mq.cmd_audit import main as _audit_main
 
-    return _audit_main(
-        [f"--repo={args.repo}", f"--event-path={args.event_path}"]
-    )
+    return _audit_main([f"--repo={args.repo}", f"--event-path={args.event_path}"])
 
 
 def run_preflight(args: argparse.Namespace) -> int:
@@ -670,6 +664,6 @@ __all__ = [
     "run_audit",
     "run_handle",
     "run_preflight",
-    "run_validate_config",
     "run_process_cycle",
+    "run_validate_config",
 ]

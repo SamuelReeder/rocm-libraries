@@ -33,7 +33,9 @@ SCENARIO_RFC_MAP: dict[str, str] = {
     "audit_label_removed": "RFC §4.3.1 row: Remove any `mq:*` label",
     "audit_base_ref_changed": "RFC §4.3.1 row: Change PR base branch away from `develop`",
     "audit_converted_to_draft": "RFC §4.3.1 row: Convert PR to draft",
-    "audit_reopened_stale_labels": "RFC §4.3.1 row: Close-then-reopen with `mq:*` labels still applied",
+    "audit_reopened_stale_labels": (
+        "RFC §4.3.1 row: Close-then-reopen with `mq:*` labels still applied"
+    ),
 }
 
 
