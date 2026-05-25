@@ -22,8 +22,7 @@ from typing import Any
 
 import pytest
 
-from rocm_mq import cmd_handle
-from rocm_mq import protected_paths
+from rocm_mq import cmd_handle, protected_paths
 from rocm_mq.state import AppIdentity, MergeQueueConfig
 from tests.gh_fake import FakeGitHub, FakePR, FakeRepoState
 
@@ -131,7 +130,11 @@ def _seed_pr(
         labels=labels if labels is not None else set(),
         user_login=user_login,
         maintainer_can_modify=maintainer_can_modify,
-        reviews=reviews if reviews is not None else [{"state": "APPROVED", "user_login": "rev1"}],
+        reviews=(
+            reviews
+            if reviews is not None
+            else [{"state": "APPROVED", "user_login": "rev1"}]
+        ),
         head_repo_id=2 if is_cross_repo else 1,
         base_repo_id=1,
     )
@@ -633,7 +636,8 @@ class TestMainSelfBootstrapRejection:
         # Rejection comment posted
         comments = fake_state.comments_store.get(7, {})
         assert any(
-            "self-bootstrap" in body.lower() or "rfc §8" in body.lower()
+            "merge-queue infrastructure" in body.lower()
+            and "manual maintainer review" in body.lower()
             for body in comments.values()
         )
 
@@ -680,7 +684,9 @@ class TestMainSelfBootstrapRejection:
         def fail_if_routed(*_args: object, **_kwargs: object) -> frozenset[str]:
             raise AssertionError("queues_for_paths must not run for protected paths")
 
-        monkeypatch.setattr(cmd_handle, "queues_for_paths", fail_if_routed, raising=True)
+        monkeypatch.setattr(
+            cmd_handle, "queues_for_paths", fail_if_routed, raising=True
+        )
 
         rc = _run_main(
             tmp_path,
@@ -712,9 +718,13 @@ class TestMainSelfBootstrapRejection:
         )
 
         def fail_if_routed(*_args: object, **_kwargs: object) -> frozenset[str]:
-            raise AssertionError("queues_for_paths must not run for generated protected paths")
+            raise AssertionError(
+                "queues_for_paths must not run for generated protected paths"
+            )
 
-        monkeypatch.setattr(cmd_handle, "queues_for_paths", fail_if_routed, raising=True)
+        monkeypatch.setattr(
+            cmd_handle, "queues_for_paths", fail_if_routed, raising=True
+        )
 
         rc = _run_main(
             tmp_path,
@@ -775,8 +785,13 @@ class TestEyesOnEveryMerge:
         _seed_pr(fake_state, files=[".github/workflows/foo.yml"])
         fake_state.collaborators["alice"] = "write"
         payload = _make_event_payload()
-        _run_main(tmp_path, monkeypatch, payload=payload,
-                  fake_client=fake_client, config=hipdnn_config)
+        _run_main(
+            tmp_path,
+            monkeypatch,
+            payload=payload,
+            fake_client=fake_client,
+            config=hipdnn_config,
+        )
         assert (4242, "eyes") in fake_state.reactions_log
 
     def test_eyes_posted_on_no_opted_in_path_rejection(
@@ -790,8 +805,13 @@ class TestEyesOnEveryMerge:
         _seed_pr(fake_state, files=["docs/readme.md"])
         fake_state.collaborators["alice"] = "write"
         payload = _make_event_payload()
-        _run_main(tmp_path, monkeypatch, payload=payload,
-                  fake_client=fake_client, config=hipdnn_config)
+        _run_main(
+            tmp_path,
+            monkeypatch,
+            payload=payload,
+            fake_client=fake_client,
+            config=hipdnn_config,
+        )
         assert (4242, "eyes") in fake_state.reactions_log
 
     def test_eyes_posted_on_perm_rejection(
@@ -803,12 +823,16 @@ class TestEyesOnEveryMerge:
         hipdnn_config: MergeQueueConfig,
     ) -> None:
         # Author is "carol"; commenter alice has no role; no override.
-        _seed_pr(fake_state, files=["projects/hipdnn/x.cpp"],
-                 user_login="carol")
+        _seed_pr(fake_state, files=["projects/hipdnn/x.cpp"], user_login="carol")
         fake_state.collaborators["alice"] = "none"
         payload = _make_event_payload()
-        _run_main(tmp_path, monkeypatch, payload=payload,
-                  fake_client=fake_client, config=hipdnn_config)
+        _run_main(
+            tmp_path,
+            monkeypatch,
+            payload=payload,
+            fake_client=fake_client,
+            config=hipdnn_config,
+        )
         assert (4242, "eyes") in fake_state.reactions_log
 
     def test_eyes_posted_on_gate_failure_rejection(
@@ -823,8 +847,13 @@ class TestEyesOnEveryMerge:
         _seed_pr(fake_state, files=["projects/hipdnn/x.cpp"], reviews=[])
         fake_state.collaborators["alice"] = "write"
         payload = _make_event_payload()
-        _run_main(tmp_path, monkeypatch, payload=payload,
-                  fake_client=fake_client, config=hipdnn_config)
+        _run_main(
+            tmp_path,
+            monkeypatch,
+            payload=payload,
+            fake_client=fake_client,
+            config=hipdnn_config,
+        )
         assert (4242, "eyes") in fake_state.reactions_log
 
     def test_eyes_posted_exactly_once_on_success(
@@ -840,8 +869,13 @@ class TestEyesOnEveryMerge:
         _seed_pr(fake_state, files=["projects/hipdnn/x.cpp"])
         fake_state.collaborators["alice"] = "write"
         payload = _make_event_payload()
-        _run_main(tmp_path, monkeypatch, payload=payload,
-                  fake_client=fake_client, config=hipdnn_config)
+        _run_main(
+            tmp_path,
+            monkeypatch,
+            payload=payload,
+            fake_client=fake_client,
+            config=hipdnn_config,
+        )
         eyes = [r for r in fake_state.reactions_log if r == (4242, "eyes")]
         assert len(eyes) == 1, (
             f"Expected exactly 1 eyes reaction; got {len(eyes)}: "
@@ -1117,16 +1151,16 @@ class TestMainErrors:
     ) -> None:
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         event_path = _write_event(tmp_path, _make_event_payload())
-        rc = cmd_handle.main(
-            ["--repo", "x/y", "--event-path", str(event_path)]
-        )
+        rc = cmd_handle.main(["--repo", "x/y", "--event-path", str(event_path)])
         assert rc == 2
 
     def test_missing_event_path_returns_1(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         monkeypatch.setenv("GITHUB_TOKEN", "ghs_test")
-        rc = cmd_handle.main(["--repo", "x/y", "--event-path", "/nonexistent/event.json"])
+        rc = cmd_handle.main(
+            ["--repo", "x/y", "--event-path", "/nonexistent/event.json"]
+        )
         assert rc == 1
         err = capsys.readouterr().err
         # full traceback printed via the shared try/except wrapper

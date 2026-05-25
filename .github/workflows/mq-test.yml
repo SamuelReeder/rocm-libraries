@@ -1,11 +1,6 @@
-# NOTE: This file is in SELF_BOOTSTRAP_PATHS — /merge on PRs touching this
-# file requires manual maintainer merge (RFC §8). The Phase 3 handler will
-# reject the auto-enqueue path when this file (or anything else under
-# .github/workflows/**) is in the diff.
-#
-# Phase 2 DOG-01 delivery: full per-commit pytest suite (PURE + IO contract +
-# executor + Hypothesis) runs green in CI on every push to the fork branch
-# and every PR targeting develop.
+# Merge queue package checks. This workflow is intentionally scoped to
+# merge-queue infrastructure changes so ordinary rocm-libraries PRs do not
+# pay for these Python-only checks.
 
 name: Merge Queue Tests
 
@@ -14,15 +9,17 @@ on:
     branches:
       - develop
       - users/sareeder/**
+    paths:
+      - ".github/merge-queue/**"
+      - ".github/workflows/mq-*.yml"
   pull_request:
     branches:
       - develop
+    paths:
+      - ".github/merge-queue/**"
+      - ".github/workflows/mq-*.yml"
 
-# Bound GITHUB_TOKEN to read-only contents. The test workflow only checks out
-# the repo, installs deps, and runs pytest/ruff/mypy — no writes to issues,
-# PRs, statuses, or releases. Without this block the workflow inherits the
-# repo default, which can be silently flipped to read-write by a future
-# repository setting change (WR-05).
+# Tests need only repository reads.
 permissions:
   contents: read
 
@@ -35,12 +32,11 @@ jobs:
 
     steps:
       - name: Checkout
-        # SHA-pinned per RFC §8 self-bootstrap protection (CR-05). Tag in the
-        # trailing comment is for human readability only; CI trusts the SHA.
+        # SHA-pinned action.
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.2.2
 
       - name: Set up Python 3.12
-        # SHA-pinned per RFC §8 self-bootstrap protection (CR-05).
+        # SHA-pinned action.
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
           python-version: "3.12"
@@ -53,11 +49,7 @@ jobs:
         run: python -m ruff check .
 
       - name: Type check (mypy)
-        # mypy is non-strict by default; strict mode is opt-in per pyproject.toml
-        # [[tool.mypy.overrides]] on the six pure-layer modules. CLAUDE.md
-        # ("mypy --strict on the decision layer is load-bearing") forbids
-        # `continue-on-error: true` here — type regressions on the pure layer
-        # MUST fail CI rather than ship silently (CR-04).
+        # The pure decision-layer modules opt into strict mypy in pyproject.toml.
         run: python -m mypy src/rocm_mq/ tests/gh_fake.py
 
       - name: Run tests

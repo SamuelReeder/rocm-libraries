@@ -30,8 +30,8 @@ from typing import TYPE_CHECKING, Any
 
 from githubkit.exception import RequestFailed
 
-from rocm_mq.comment import render_status_body
 from rocm_mq import protected_paths
+from rocm_mq.comment import render_status_body
 from rocm_mq.executor import _find_status_comment_id
 from rocm_mq.pathmap import queues_for_paths
 from rocm_mq.state import MergeQueueConfig, PRState, RenderContext
@@ -90,9 +90,7 @@ def parse_commands(body: str) -> set[str]:
     distinct command (RFC §4.5 idempotency contract).
     """
     return {
-        m.group(1)
-        for line in body.splitlines()
-        if (m := _CMD_RE.match(line.strip()))
+        m.group(1) for line in body.splitlines() if (m := _CMD_RE.match(line.strip()))
     }
 
 
@@ -124,9 +122,7 @@ def is_self_bootstrap(changed_paths: list[str]) -> list[str]:
     if not generated_hits:
         return direct_hits
     return [
-        path
-        for path in changed_paths
-        if path in direct_hits or path in generated_hits
+        path for path in changed_paths if path in direct_hits or path in generated_hits
     ]
 
 
@@ -223,12 +219,8 @@ def _check_at_enqueue_gates(
     # check to cross-repo PRs where the field carries real signal (the
     # fork author must opt in to let the upstream maintainer push to their
     # branch for the queue's develop-merge step).
-    head_repo_id = getattr(
-        getattr(getattr(pr, "head", None), "repo", None), "id", None
-    )
-    base_repo_id = getattr(
-        getattr(getattr(pr, "base", None), "repo", None), "id", None
-    )
+    head_repo_id = getattr(getattr(getattr(pr, "head", None), "repo", None), "id", None)
+    base_repo_id = getattr(getattr(getattr(pr, "base", None), "repo", None), "id", None)
     is_cross_repo = (
         head_repo_id is not None
         and base_repo_id is not None
@@ -466,7 +458,9 @@ def _handle_merge(
     pr_resp = client.rest.pulls.get(owner, repo, pr_number)
     pr = pr_resp.parsed_data
     pr_author_login = str(getattr(getattr(pr, "user", None), "login", ""))
-    current_labels = {str(getattr(lbl, "name", "")) for lbl in getattr(pr, "labels", [])}
+    current_labels = {
+        str(getattr(lbl, "name", "")) for lbl in getattr(pr, "labels", [])
+    }
 
     # Step 2: idempotency short-circuit. Eyes already posted above.
     if _LABEL_QUEUED in current_labels or _LABEL_ACTIVE in current_labels:
@@ -488,8 +482,7 @@ def _handle_merge(
         )
         return 0
 
-    # Step 3: self-bootstrap rejection (RFC §8). NO state mutation on
-    # rejection — no labels, no eyes, no status comment.
+    # Step 3: self-bootstrap rejection. No queue-state mutation on rejection.
     files_resp = client.rest.pulls.list_files(owner, repo, pr_number)
     changed_paths_list: list[str] = [
         str(f.filename) for f in (files_resp.parsed_data or [])
@@ -499,9 +492,8 @@ def _handle_merge(
         body = (
             "/merge cannot enqueue this PR because it modifies merge-queue "
             f"infrastructure paths: {', '.join(f'`{p}`' for p in bootstrap_hits)}. "
-            "RFC §8 (self-bootstrap protection) requires manual maintainer review "
-            "for changes to these paths. Once reviewed, a maintainer can merge "
-            "directly via the GitHub UI."
+            "Changes to these paths require manual maintainer review. Once reviewed, "
+            "a maintainer can merge directly via the GitHub UI."
         )
         _post_comment(client, owner, repo, pr_number, body)
         return 0
@@ -519,13 +511,13 @@ def _handle_merge(
             f"`/merge` rejected: @{commenter_login} has role `{role_name}` on "
             f"this repository, which is not in the eligible set "
             f"({', '.join(sorted(_ELIGIBLE_ROLES))}) and you are not the PR "
-            "author. Per RFC §4.4 the merge queue requires write-or-above "
-            "permission to enqueue another author's PR."
+            "author. The merge queue requires write-or-above permission to "
+            "enqueue another author's PR."
         )
         _post_comment(client, owner, repo, pr_number, body)
         return 0
 
-    # Step 5: derive the per-PR queue set via the RFC §4.2 pathmap.
+    # Step 5: derive the per-PR queue set.
     changed_paths = tuple(changed_paths_list)
     queues = queues_for_paths(changed_paths, config)
 
@@ -543,14 +535,19 @@ def _handle_merge(
 
     # Step 6: at-enqueue gates.
     failed_gates = _check_at_enqueue_gates(
-        client, owner, repo, pr_number, pr, queues,
+        client,
+        owner,
+        repo,
+        pr_number,
+        pr,
+        queues,
         require_approval=config.require_approval_at_enqueue,
     )
     if failed_gates:
         body = (
             "`/merge` rejected: the following at-enqueue gates failed: "
             f"{', '.join(f'`{g}`' for g in failed_gates)}. Re-post `/merge` "
-            "once each condition is addressed (RFC §4.3)."
+            "once each condition is addressed."
         )
         _post_comment(client, owner, repo, pr_number, body)
         return 0
@@ -606,8 +603,8 @@ def _handle_dequeue(
             f"`/dequeue` rejected: @{commenter_login} has role `{role_name}` on "
             f"this repository, which is not in the eligible set "
             f"({', '.join(sorted(_ELIGIBLE_ROLES))}) and you are not the PR "
-            "author. Per RFC §4.4 the merge queue requires write-or-above "
-            "permission to dequeue another author's PR."
+            "author. The merge queue requires write-or-above permission to "
+            "dequeue another author's PR."
         )
         _post_comment(client, owner, repo, pr_number, body)
         return 0
